@@ -680,6 +680,68 @@ body {
 .toast.err  { color: var(--red);    border-color: #660022; }
 .toast.info { color: var(--cyan);   border-color: #004455; }
 
+/* ── disk browser ────────────────────────────────────────────── */
+.disk-entry {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 14px;
+}
+
+.disk-entry:last-child { border-bottom: none; }
+
+.disk-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.disk-entry-header input[type=checkbox] { accent-color: var(--green); }
+
+.disk-dev  { font-size: 13px; font-weight: 700; color: var(--green); }
+.disk-size { font-size: 11px; color: var(--txt2); }
+.disk-info { font-size: 10px; color: var(--txt2); flex: 1; }
+
+.disk-tag {
+  font-size: 9px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  border: 1px solid;
+}
+
+.disk-tag.usb    { color: var(--green);  border-color: var(--green-dim); }
+.disk-tag.sshd   { color: var(--orange); border-color: var(--orange); }
+.disk-tag.sata   { color: var(--txt2);   border-color: var(--border2); }
+.disk-tag.nvme   { color: var(--cyan);   border-color: #004455; }
+.disk-tag.unknwn { color: var(--txt3);   border-color: var(--border2); }
+
+.disk-parts {
+  margin: 6px 0 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.part-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--txt2);
+}
+
+.part-name { color: var(--txt); font-weight: 700; min-width: 60px; }
+.part-fs   { color: var(--cyan); min-width: 50px; }
+.part-mnt  { color: var(--yellow); }
+
+.disk-actions {
+  margin-top: 8px;
+  margin-left: 24px;
+  display: flex;
+  gap: 6px;
+}
+
 /* ── misc helpers ────────────────────────────────────────────── */
 .hidden { display: none !important; }
 hr.divider { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
