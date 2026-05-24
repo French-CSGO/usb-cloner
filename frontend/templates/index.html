@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>USB KEY MANAGER — CS2</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ═══ HEADER ═══════════════════════════════════════════════ -->
+  <header id="header">
+    <div class="logo">⬡ USB KEY MANAGER</div>
+    <div class="sub">CS2 TOURNAMENT</div>
+    <div class="spacer"></div>
+    <div class="status-pill">
+      <div class="dot" id="ws-dot"></div>
+      <span id="ws-label">CONNECTING</span>
+    </div>
+  </header>
+
+  <!-- ═══ SIDEBAR — Devices ════════════════════════════════════ -->
+  <aside id="sidebar" class="panel">
+    <div class="panel-title">◈ USB DEVICES</div>
+
+    <!-- SSHD -->
+    <div class="sshd-block">
+      <div class="sshd-row">
+        <span class="sshd-label">SSHD / Storage</span>
+        <span class="sshd-badge unmounted" id="sshd-badge">UNMOUNTED</span>
+      </div>
+      <div class="sshd-actions">
+        <button class="btn btn-green btn-sm" onclick="openModal('sshd-mount')">Mount</button>
+        <button class="btn btn-ghost btn-sm" onclick="doUnmountSshd()">Unmount</button>
+        <button class="btn btn-ghost btn-sm" onclick="refreshDevices()">⟳</button>
+      </div>
+    </div>
+
+    <!-- Device list -->
+    <div class="device-list" id="device-list">
+      <div class="no-devices">No USB keys detected</div>
+    </div>
+  </aside>
+
+  <!-- ═══ MAIN — Operations ════════════════════════════════════ -->
+  <main id="main">
+
+    <!-- Partition config -->
+    <div class="section">
+      <div class="section-title">Partition config</div>
+      <div class="partition-bar">
+        <div class="field">
+          <label>Windows part.</label>
+          <input type="text" id="part-win" value="1" maxlength="2">
+        </div>
+        <div class="field">
+          <label>CS2 part.</label>
+          <input type="text" id="part-cs2" value="2" maxlength="2">
+        </div>
+      </div>
+    </div>
+
+    <!-- Setup -->
+    <div class="section">
+      <div class="section-title">── Setup</div>
+      <div class="op-grid">
+        <button class="op-btn primary" onclick="openModal('create-master')">
+          <span class="icon">📀</span>
+          <span class="name">Create Master</span>
+          <span class="desc">Clone master key → images</span>
+        </button>
+        <button class="op-btn primary" onclick="confirmDeploy()">
+          <span class="icon">🚀</span>
+          <span class="name">Deploy All Keys</span>
+          <span class="desc">Flash Windows + CS2 blank</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tournament -->
+    <div class="section">
+      <div class="section-title">── Tournament</div>
+      <div class="op-grid">
+        <button class="op-btn" onclick="openModal('assign')">
+          <span class="icon">🔧</span>
+          <span class="name">Assign Players</span>
+          <span class="desc">Set who plays on each key</span>
+        </button>
+        <button class="op-btn" onclick="confirmSave()">
+          <span class="icon">💾</span>
+          <span class="name">Save Players</span>
+          <span class="desc">Backup CS2 configs → SSHD</span>
+        </button>
+        <button class="op-btn" onclick="confirmLoad()">
+          <span class="icon">📥</span>
+          <span class="name">Load Players</span>
+          <span class="desc">Restore configs → keys</span>
+        </button>
+        <button class="op-btn" onclick="openModal('change-player')">
+          <span class="icon">🔄</span>
+          <span class="name">Change Player</span>
+          <span class="desc">Save old, load new</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Maintenance -->
+    <div class="section">
+      <div class="section-title">── Maintenance</div>
+      <div class="op-grid">
+        <button class="op-btn danger" onclick="confirmReset()">
+          <span class="icon">🧹</span>
+          <span class="name">Reset CS2 Blank</span>
+          <span class="desc">Wipe all player configs</span>
+        </button>
+        <button class="op-btn" onclick="openModal('rename-profile')">
+          <span class="icon">✏️</span>
+          <span class="name">Rename Profile</span>
+          <span class="desc">Rename a saved profile</span>
+        </button>
+        <button class="op-btn" onclick="openModal('copy-profile')">
+          <span class="icon">📋</span>
+          <span class="name">Copy Profile</span>
+          <span class="desc">Duplicate a player profile</span>
+        </button>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ═══ RIGHT — Profiles + Console ══════════════════════════ -->
+  <aside id="right" class="panel">
+    <div class="panel-title">◈ PLAYER PROFILES</div>
+
+    <div class="profiles-list" id="profiles-list">
+      <div class="no-profiles">No profiles saved</div>
+    </div>
+
+    <div id="console">
+      <div class="panel-title" style="border-top:1px solid var(--border)">◈ CONSOLE</div>
+      <div class="console-body" id="console-body"></div>
+    </div>
+  </aside>
+
+  <!-- ═══ JOBS PANEL ═══════════════════════════════════════════ -->
+  <div id="jobs-panel">
+    <div class="jobs-header">
+      ◈ ACTIVE OPERATIONS
+      <span class="job-count" id="job-count">0</span>
+    </div>
+    <div class="task-list" id="task-list">
+      <div class="no-jobs">No active operations</div>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<!-- ═══ MODALS ════════════════════════════════════════════════ -->
+
+<!-- SSHD Mount -->
+<div class="modal-overlay hidden" id="modal-sshd-mount">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">Mount SSHD Storage</span>
+      <button class="modal-close" onclick="closeModal('sshd-mount')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field">
+        <label>Disk (e.g. sdb)</label>
+        <input type="text" id="sshd-disk" placeholder="sdb">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('sshd-mount')">Cancel</button>
+      <button class="btn btn-green" onclick="doMountSshd()">Mount</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create Master -->
+<div class="modal-overlay hidden" id="modal-create-master">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">Create Master Images</span>
+      <button class="modal-close" onclick="closeModal('create-master')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="warn-box">⚠ This reads the master USB key and creates base images on the SSHD.</div>
+      <div class="form-field">
+        <label>Master disk (e.g. sda)</label>
+        <input type="text" id="master-disk" placeholder="sda">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('create-master')">Cancel</button>
+      <button class="btn btn-orange" onclick="doCreateMaster()">Create Images</button>
+    </div>
+  </div>
+</div>
+
+<!-- Assign Players -->
+<div class="modal-overlay hidden" id="modal-assign">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">Assign Players → Keys</span>
+      <button class="modal-close" onclick="closeModal('assign')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="assign-fields">
+        <div class="no-devices" style="color:var(--txt2)">No USB keys detected. Refresh first.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('assign')">Cancel</button>
+      <button class="btn btn-green" onclick="doAssign()">Save Assignments</button>
+    </div>
+  </div>
+</div>
+
+<!-- Change Player -->
+<div class="modal-overlay hidden" id="modal-change-player">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">Change Player on Key</span>
+      <button class="modal-close" onclick="closeModal('change-player')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field">
+        <label>Key device</label>
+        <select id="change-disk"></select>
+      </div>
+      <div class="form-field">
+        <label>New player name</label>
+        <input type="text" id="change-new-player" placeholder="PlayerName">
+      </div>
+      <div class="form-field" style="flex-direction:row;align-items:center;gap:8px">
+        <input type="checkbox" id="change-save-old" checked>
+        <label for="change-save-old" style="text-transform:none;font-size:11px">
+          Save current player's config before switching
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('change-player')">Cancel</button>
+      <button class="btn btn-orange" onclick="doChangePlayer()">Switch Player</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rename Profile -->
+<div class="modal-overlay hidden" id="modal-rename-profile">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">Rename Profile</span>
+      <button class="modal-close" onclick="closeModal('rename-profile')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field">
+        <label>Current name</label>
+        <input type="text" id="rename-old" placeholder="PlayerA">
+      </div>
+      <div class="form-field">
+        <label>New name</label>
+        <input type="text" id="rename-new" placeholder="PlayerB">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('rename-profile')">Cancel</button>
+      <button class="btn btn-green" onclick="doRenameProfile()">Rename</button>
+    </div>
+  </div>
+</div>
+
+<!-- Copy Profile -->
+<div class="modal-overlay hidden" id="modal-copy-profile">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">Copy Profile</span>
+      <button class="modal-close" onclick="closeModal('copy-profile')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field">
+        <label>Source player</label>
+        <input type="text" id="copy-src" placeholder="PlayerA">
+      </div>
+      <div class="form-field">
+        <label>New player name</label>
+        <input type="text" id="copy-dst" placeholder="PlayerA_backup">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('copy-profile')">Cancel</button>
+      <button class="btn btn-green" onclick="doCopyProfile()">Copy</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm generic -->
+<div class="modal-overlay hidden" id="modal-confirm">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title" id="confirm-title">Confirm</span>
+      <button class="modal-close" onclick="closeModal('confirm')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="warn-box" id="confirm-msg"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('confirm')">Cancel</button>
+      <button class="btn btn-red" id="confirm-ok-btn" onclick="">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

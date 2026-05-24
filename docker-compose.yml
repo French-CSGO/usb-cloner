@@ -1,0 +1,27 @@
+services:
+  usb-cloner:
+    build: .
+    image: ghcr.io/french-csgo/usb-cloner:latest
+    container_name: usb-cloner
+    restart: unless-stopped
+
+    # Required for raw disk access (dd, mount, blockdev)
+    privileged: true
+
+    volumes:
+      - /dev:/dev                   # expose all block devices
+      - /mnt:/mnt                   # share host mount namespace
+      - ./data:/data                # persistent logs + associations
+
+    ports:
+      - "5000:5000"
+
+    environment:
+      SSHD_MOUNT:   /mnt/sshd
+      IMG_DIR:      /mnt/sshd/images
+      JOUEURS_DIR:  /mnt/sshd/images/joueurs
+      WIN_IMG:      /mnt/sshd/images/windows_base.img
+      CS2_IMG:      /mnt/sshd/images/cs2_vierge.img
+      LOG_FILE:     /data/usb_manager.log
+      HISTORY_FILE: /mnt/sshd/historique_tournoi.log
+      ASSOC_FILE:   /data/usb_associations.conf
