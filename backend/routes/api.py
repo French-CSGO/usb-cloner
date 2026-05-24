@@ -58,6 +58,7 @@ def unmount():
 
 @api.get("/devices")
 def list_devices():
+    """USB keys only (auto-detected or manually selected), enriched with player."""
     assoc = device_service.load_associations()
     disks = device_service.get_usb_disks()
     for d in disks:
@@ -65,9 +66,22 @@ def list_devices():
     return jsonify(disks)
 
 
-@api.get("/devices/all")
-def list_all_devices():
-    return jsonify(device_service.get_all_disks())
+@api.get("/disks")
+def list_all_disks():
+    """ALL block devices with partitions — used for the disk browser."""
+    assoc  = device_service.load_associations()
+    disks  = device_service.get_all_disks_full()
+    for d in disks:
+        d["player"] = assoc.get(d["name"])
+    return jsonify(disks)
+
+
+@api.post("/devices/select")
+def select_usb_disks():
+    """Manually mark which disks are USB keys (overrides auto-detect)."""
+    names = (request.json or {}).get("names", [])
+    device_service.save_usb_selection(names)
+    return _ok(selected=names)
 
 
 # ── images ────────────────────────────────────────────────────────

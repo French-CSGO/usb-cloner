@@ -25,7 +25,10 @@
 
   <!-- ═══ SIDEBAR — Devices ════════════════════════════════════ -->
   <aside id="sidebar" class="panel">
-    <div class="panel-title">◈ USB DEVICES</div>
+    <div class="panel-title" style="display:flex;align-items:center;justify-content:space-between">
+      <span>◈ USB DEVICES</span>
+      <button class="btn btn-ghost btn-sm" onclick="openDiskBrowser()" title="Browse all disks">⊞ ALL DISKS</button>
+    </div>
 
     <!-- SSHD -->
     <div class="sshd-block">
@@ -42,7 +45,11 @@
 
     <!-- Device list -->
     <div class="device-list" id="device-list">
-      <div class="no-devices">No USB keys detected</div>
+      <div class="no-devices">No USB keys detected<br>
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="openDiskBrowser()">
+          Browse all disks
+        </button>
+      </div>
     </div>
   </aside>
 
@@ -312,6 +319,33 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('confirm')">Cancel</button>
       <button class="btn btn-red" id="confirm-ok-btn" onclick="">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── DISK BROWSER ─────────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-disk-browser">
+  <div class="modal-box" style="min-width:560px;max-width:700px">
+    <div class="modal-header">
+      <span class="modal-title">All Block Devices</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-ghost btn-sm" onclick="loadDiskBrowser()">⟳ Refresh</button>
+        <button class="modal-close" onclick="closeModal('disk-browser')">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" style="padding:0;max-height:480px;overflow-y:auto">
+      <div id="disk-browser-body" style="padding:14px">
+        <div style="color:var(--txt3);text-align:center;padding:20px">Loading…</div>
+      </div>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <span style="font-size:10px;color:var(--txt2)">
+        Check disks to mark them as USB keys for operations
+      </span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" onclick="closeModal('disk-browser')">Close</button>
+        <button class="btn btn-green" onclick="saveUsbSelection()">Apply USB Selection</button>
+      </div>
     </div>
   </div>
 </div>

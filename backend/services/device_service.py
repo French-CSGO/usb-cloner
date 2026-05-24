@@ -5,53 +5,118 @@ import subprocess
 
 from config import ASSOC_FILE, SSHD_MOUNT
 
+# Persists which disks the user has manually tagged as USB keys
+_USB_SEL_FILE = os.environ.get("USB_SEL_FILE", "/data/usb_selection.conf")
+
 
 def _run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
-def get_all_disks():
-    """Return list of all non-loop block devices with metadata."""
-    r = _run(["lsblk", "-d", "-o", "NAME,SIZE,TYPE,TRAN,VENDOR,MODEL", "--json"])
-    try:
-        data = json.loads(r.stdout)
-        devs = []
-        for d in data.get("blockdevices", []):
-            if d.get("type") == "disk":
-                devs.append({
-                    "name":   d.get("name", ""),
-                    "size":   d.get("size", "?"),
-                    "tran":   d.get("tran") or "unknown",
-                    "vendor": (d.get("vendor") or "").strip(),
-                    "model":  (d.get("model") or "").strip(),
-                })
-        return devs
-    except Exception:
-        return []
+# ── full disk tree (disks + partitions) ───────────────────────────
 
+def get_all_disks_full():
+    """
+    Return all non-loop block devices with their partitions.
+    Each disk dict:
+      { name, size, tran, vendor, model, is_usb, mountpoint,
+        partitions: [ {name, size, mountpoint, fstype} ] }
+    """
+    r = _run([
+        "lsblk", "-o",
+        "NAME,SIZE,TYPE,TRAN,VENDOR,MODEL,MOUNTPOINT,FSTYPE",
+        "--json",
+    ])
+    try:
+        raw = json.loads(r.stdout).get("blockdevices", [])
+    except Exception:
+        raw = []
+
+    usb_sel = load_usb_selection()
+    sshd_name = _sshd_base_name() if is_sshd_mounted() else None
+
+    disks = []
+    for d in raw:
+        if d.get("type") not in ("disk",):
+            continue
+        name  = d.get("name", "")
+        tran  = d.get("tran") or "unknown"
+        parts = []
+        for ch in d.get("children") or []:
+            if ch.get("type") in ("part", "lvm"):
+                parts.append({
+                    "name":       ch.get("name", ""),
+                    "size":       ch.get("size", "?"),
+                    "mountpoint": ch.get("mountpoint") or "",
+                    "fstype":     ch.get("fstype") or "",
+                })
+        disks.append({
+            "name":       name,
+            "size":       d.get("size", "?"),
+            "tran":       tran,
+            "vendor":     (d.get("vendor") or "").strip(),
+            "model":      (d.get("model") or "").strip(),
+            "mountpoint": d.get("mountpoint") or "",
+            "is_sshd":    name == sshd_name,
+            "is_usb":     tran == "usb" or name in usb_sel,
+            "partitions": parts,
+        })
+    return disks
+
+
+def get_all_disks():
+    """Flat list of all disks (no partition detail)."""
+    return [
+        {k: v for k, v in d.items() if k != "partitions"}
+        for d in get_all_disks_full()
+    ]
+
+
+# ── USB key selection (auto + manual override) ────────────────────
+
+def load_usb_selection() -> set:
+    """Return set of disk names manually marked as USB keys."""
+    sel = set()
+    if os.path.exists(_USB_SEL_FILE):
+        with open(_USB_SEL_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    sel.add(line)
+    return sel
+
+
+def save_usb_selection(names: list):
+    os.makedirs(os.path.dirname(_USB_SEL_FILE) or ".", exist_ok=True)
+    with open(_USB_SEL_FILE, "w") as f:
+        for n in names:
+            f.write(n + "\n")
+
+
+def get_usb_disks(exclude_sshd=True) -> list:
+    """
+    Return disks tagged as USB keys (tran==usb OR manually selected),
+    optionally excluding the SSHD disk.
+    """
+    disks = [d for d in get_all_disks_full() if d["is_usb"]]
+    if exclude_sshd:
+        disks = [d for d in disks if not d["is_sshd"]]
+    # Strip partitions before returning
+    return [{k: v for k, v in d.items() if k != "partitions"} for d in disks]
+
+
+# ── SSHD helpers ──────────────────────────────────────────────────
 
 def _sshd_base_name():
-    """Derive the bare disk name that hosts the SSHD mount, e.g. 'sdb'."""
     r = _run(["df", SSHD_MOUNT])
     lines = r.stdout.strip().splitlines()
     if len(lines) < 2:
         return None
-    dev = lines[-1].split()[0]  # e.g. /dev/sdb1
+    dev = lines[-1].split()[0]
     return re.sub(r"\d+$", "", dev.replace("/dev/", ""))
 
 
-def get_usb_disks(exclude_sshd=True):
-    """Return USB disks only, optionally excluding the SSHD disk."""
-    disks = [d for d in get_all_disks() if d["tran"] == "usb"]
-    if exclude_sshd and is_sshd_mounted():
-        sshd_name = _sshd_base_name()
-        if sshd_name:
-            disks = [d for d in disks if d["name"] != sshd_name]
-    return disks
-
-
-def get_size(path):
-    """Return size in bytes for a file or block device."""
+def get_size(path: str) -> int:
     if os.path.isfile(path):
         return os.path.getsize(path)
     r = _run(["blockdev", "--getsize64", path])
@@ -61,24 +126,25 @@ def get_size(path):
         return 0
 
 
-def is_sshd_mounted():
+def is_sshd_mounted() -> bool:
     return _run(["mountpoint", "-q", SSHD_MOUNT]).returncode == 0
 
 
-def mount_sshd(disk):
+def mount_sshd(disk: str):
     os.makedirs(SSHD_MOUNT, exist_ok=True)
     for dev in [f"/dev/{disk}1", f"/dev/{disk}"]:
-        r = _run(["mount", dev, SSHD_MOUNT])
-        if r.returncode == 0:
+        if _run(["mount", dev, SSHD_MOUNT]).returncode == 0:
             return True, f"Mounted {dev} → {SSHD_MOUNT}"
-    return False, "Failed to mount SSHD — check disk name"
+    return False, "Failed to mount — check disk name and permissions"
 
 
-def unmount_sshd():
+def unmount_sshd() -> bool:
     return _run(["umount", SSHD_MOUNT]).returncode == 0
 
 
-def load_associations():
+# ── player associations ───────────────────────────────────────────
+
+def load_associations() -> dict:
     assoc = {}
     if not os.path.exists(ASSOC_FILE):
         return assoc
@@ -91,8 +157,8 @@ def load_associations():
     return assoc
 
 
-def save_associations(assoc):
-    os.makedirs(os.path.dirname(ASSOC_FILE), exist_ok=True)
+def save_associations(assoc: dict):
+    os.makedirs(os.path.dirname(ASSOC_FILE) or ".", exist_ok=True)
     with open(ASSOC_FILE, "w") as f:
         for disk, player in assoc.items():
             f.write(f"{disk}={player}\n")

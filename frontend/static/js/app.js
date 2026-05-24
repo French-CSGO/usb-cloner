@@ -402,6 +402,100 @@ async function doCopyProfile() {
   await refreshProfiles();
 }
 
+// ── disk browser ─────────────────────────────────────────────
+let _allDisks = [];
+
+async function openDiskBrowser() {
+  openModal('disk-browser');
+  await loadDiskBrowser();
+}
+
+async function loadDiskBrowser() {
+  const body = document.getElementById('disk-browser-body');
+  body.innerHTML = '<div style="color:var(--txt3);text-align:center;padding:20px">Loading…</div>';
+  _allDisks = await api('GET', '/disks').catch(() => []);
+  renderDiskBrowser();
+}
+
+function renderDiskBrowser() {
+  const body = document.getElementById('disk-browser-body');
+  if (!_allDisks.length) {
+    body.innerHTML = '<div style="color:var(--txt3);text-align:center;padding:20px">No block devices found</div>';
+    return;
+  }
+  body.innerHTML = _allDisks.map(d => {
+    const tagClass = d.is_sshd ? 'sshd'
+                   : d.is_usb  ? 'usb'
+                   : d.tran === 'nvme' ? 'nvme'
+                   : d.tran === 'sata' ? 'sata' : 'unknwn';
+    const tagLabel = d.is_sshd ? 'SSHD'
+                   : d.is_usb  ? 'USB'
+                   : (d.tran || '?').toUpperCase();
+    const info = [d.vendor, d.model].filter(Boolean).join(' ') || `tran: ${d.tran}`;
+
+    const parts = (d.partitions || []).map(p => `
+      <div class="part-row">
+        <span class="part-name">/dev/${esc(p.name)}</span>
+        <span class="disk-size">${esc(p.size)}</span>
+        <span class="part-fs">${esc(p.fstype || '—')}</span>
+        <span class="part-mnt">${p.mountpoint ? '⇒ ' + esc(p.mountpoint) : ''}</span>
+      </div>`).join('');
+
+    const useMountBtn = !d.is_sshd ? `
+      <button class="btn btn-ghost btn-sm"
+        onclick="prefillSshd('${esc(d.name)}')">
+        Use as SSHD
+      </button>` : '';
+    const useMasterBtn = `
+      <button class="btn btn-ghost btn-sm"
+        onclick="prefillMaster('${esc(d.name)}')">
+        Use as Master
+      </button>`;
+
+    return `
+      <div class="disk-entry">
+        <div class="disk-entry-header">
+          <input type="checkbox" class="usb-chk" data-disk="${esc(d.name)}"
+            ${d.is_usb ? 'checked' : ''} ${d.is_sshd ? 'disabled' : ''}
+            onchange="updateUsbCheckPreview()">
+          <span class="disk-dev">/dev/${esc(d.name)}</span>
+          <span class="disk-size">${esc(d.size)}</span>
+          <span class="disk-info">${esc(info)}</span>
+          <span class="disk-tag ${tagClass}">${tagLabel}</span>
+          ${d.player ? `<span class="player-badge">${esc(d.player)}</span>` : ''}
+        </div>
+        ${parts ? `<div class="disk-parts">${parts}</div>` : ''}
+        <div class="disk-actions">${useMountBtn}${useMasterBtn}</div>
+      </div>`;
+  }).join('');
+}
+
+function updateUsbCheckPreview() {
+  // visual feedback only — actual save on "Apply"
+}
+
+async function saveUsbSelection() {
+  const checked = [...document.querySelectorAll('.usb-chk:checked')]
+    .map(c => c.dataset.disk);
+  await api('POST', '/devices/select', { names: checked });
+  toast(`USB selection saved (${checked.length} disk${checked.length !== 1 ? 's' : ''})`, 'ok');
+  log(`USB keys set: ${checked.join(', ') || '(none)'}`, 'ok');
+  closeModal('disk-browser');
+  await refreshDevices();
+}
+
+function prefillSshd(name) {
+  document.getElementById('sshd-disk').value = name;
+  closeModal('disk-browser');
+  openModal('sshd-mount');
+}
+
+function prefillMaster(name) {
+  document.getElementById('master-disk').value = name;
+  closeModal('disk-browser');
+  openModal('create-master');
+}
+
 // ── console log ───────────────────────────────────────────────
 function log(msg, type = '') {
   const body = document.getElementById('console-body');
