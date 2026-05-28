@@ -165,11 +165,8 @@ def is_sshd_mounted() -> bool:
 
 
 def is_storage_ready() -> bool:
-    """True if storage is accessible — either a local dir or SSHD mounted."""
-    from config import STORAGE_LOCAL, IMG_DIR
-    if STORAGE_LOCAL:
-        return True  # local dir is always accessible
-    return is_sshd_mounted()
+    """SSD is always ready; SSHD readiness is separate."""
+    return True
 
 
 def mount_sshd(disk: str):

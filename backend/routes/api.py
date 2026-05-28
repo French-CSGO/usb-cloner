@@ -4,7 +4,7 @@ import threading
 from flask import Blueprint, jsonify, request
 
 import config as _cfg
-from config import CS2_IMG, HISTORY_FILE, IMG_DIR, JOUEURS_DIR, WIN_IMG
+from config import CS2_IMG, HISTORY_FILE, IMG_DIR, JOUEURS_DIR, SSD_DIR, WIN_IMG
 from services import dd_service, device_service, profile_service
 
 api = Blueprint("api", __name__)
@@ -30,24 +30,18 @@ def _bg(fn, *args):
     threading.Thread(target=fn, args=args, daemon=True).start()
 
 
-# ── storage (SSHD or local) ───────────────────────────────────────
+# ── storage ───────────────────────────────────────────────────────
 
 @api.get("/storage/info")
 def storage_info():
-    if _cfg.STORAGE_LOCAL:
-        os.makedirs(_cfg.JOUEURS_DIR, exist_ok=True)
-        return jsonify({
-            "mode":    "local",
-            "ready":   True,
-            "mounted": True,
-            "path":    _cfg.IMG_DIR,
-        })
-    mounted = device_service.is_sshd_mounted()
+    sshd_mounted = device_service.is_sshd_mounted()
+    os.makedirs(_cfg.SSD_JOUEURS_DIR, exist_ok=True)
     return jsonify({
-        "mode":    "sshd",
-        "ready":   mounted,
-        "mounted": mounted,
-        "path":    _cfg.SSHD_MOUNT,
+        "ssd":  {"path": _cfg.SSD_DIR,  "ready": True},
+        "sshd": {"path": _cfg.SSHD_DIR, "mounted": sshd_mounted},
+        # legacy fields kept for backward compat
+        "mode": "dual", "mounted": sshd_mounted,
+        "ready": True, "path": _cfg.SSD_DIR,
     })
 
 
@@ -58,22 +52,18 @@ def mount_status():
 
 @api.post("/mount")
 def mount():
-    if _cfg.STORAGE_LOCAL:
-        return _err("Storage is local — no mount needed")
     disk = (request.json or {}).get("disk", "")
     if not disk:
         return _err("disk required")
     ok, msg = device_service.mount_sshd(disk)
     if ok:
-        os.makedirs(JOUEURS_DIR, exist_ok=True)
+        os.makedirs(_cfg.SSHD_JOUEURS_DIR, exist_ok=True)
     return (jsonify({"success": ok, "message": msg}),
             200 if ok else 500)
 
 
 @api.delete("/mount")
 def unmount():
-    if _cfg.STORAGE_LOCAL:
-        return _err("Storage is local — nothing to unmount")
     ok = device_service.unmount_sshd()
     return jsonify({"success": ok})
 
@@ -125,12 +115,28 @@ def list_images():
 
 @api.get("/profiles")
 def list_profiles():
-    return jsonify(profile_service.list_profiles())
+    return jsonify(profile_service.list_profiles_ssd())
+
+
+@api.get("/profiles/ssd")
+def list_profiles_ssd():
+    return jsonify(profile_service.list_profiles_ssd())
+
+
+@api.get("/profiles/sshd")
+def list_profiles_sshd():
+    return jsonify(profile_service.list_profiles_sshd())
+
+
+@api.get("/profiles/combined")
+def list_profiles_combined():
+    return jsonify(profile_service.list_profiles_combined())
 
 
 @api.delete("/profiles/<name>")
 def delete_profile(name):
-    ok = profile_service.delete_profile(name)
+    storage = request.args.get("storage", "ssd")
+    ok = profile_service.delete_profile(name, storage)
     return _ok() if ok else _err(f"Profile '{name}' not found", 404)
 
 
@@ -147,6 +153,54 @@ def copy_profile():
     d = request.json or {}
     ok = profile_service.copy_profile(d.get("src", ""), d.get("dst", ""))
     return _ok() if ok else _err("Source profile not found", 404)
+
+
+# ── sync ──────────────────────────────────────────────────────────
+
+@api.post("/sync/pull")
+def sync_pull():
+    """Pull profiles SSHD → SSD."""
+    d     = request.json or {}
+    names = d.get("names") or [p["name"] for p in profile_service.list_profiles_sshd()]
+    if not names:
+        return _err("No profiles on SSHD to pull")
+    if not device_service.is_sshd_mounted():
+        return _err("SSHD not mounted")
+
+    job_id = dd_service.create_job("sync_pull", [f"pull:{n}" for n in names])
+
+    def _run():
+        results = profile_service.sync_pull(names, job_id, _sio)
+        ok  = sum(1 for v in results.values() if v)
+        err = len(results) - ok
+        dd_service.jobs[job_id]["status"] = "done"
+        _sio.emit("job_complete", {"job_id": job_id, "ok": ok, "errors": err})
+
+    _bg(_run)
+    return _ok(job_id=job_id)
+
+
+@api.post("/sync/push")
+def sync_push():
+    """Push profiles SSD → SSHD."""
+    d     = request.json or {}
+    names = d.get("names") or [p["name"] for p in profile_service.list_profiles_ssd()]
+    if not names:
+        return _err("No profiles on SSD to push")
+    if not device_service.is_sshd_mounted():
+        return _err("SSHD not mounted")
+
+    job_id = dd_service.create_job("sync_push", [f"push:{n}" for n in names])
+
+    def _run():
+        results = profile_service.sync_push(names, job_id, _sio)
+        ok  = sum(1 for v in results.values() if v)
+        err = len(results) - ok
+        dd_service.jobs[job_id]["status"] = "done"
+        _sio.emit("job_complete", {"job_id": job_id, "ok": ok, "errors": err})
+
+    _bg(_run)
+    return _ok(job_id=job_id)
 
 
 # ── assignments ───────────────────────────────────────────────────

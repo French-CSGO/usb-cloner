@@ -71,8 +71,7 @@ def on_disconnect():
 if __name__ == "__main__":
     import config
     os.makedirs("/data", exist_ok=True)
-    if config.STORAGE_LOCAL or config.DEMO_MODE:
-        os.makedirs(config.JOUEURS_DIR, exist_ok=True)
+    os.makedirs(config.SSD_JOUEURS_DIR, exist_ok=True)
     if config.DEMO_MODE:
         for img in [config.WIN_IMG, config.CS2_IMG]:
             if not os.path.exists(img):
@@ -80,7 +79,7 @@ if __name__ == "__main__":
                     f.write(b"\x00" * 1024)
         log.info("DEMO MODE — fake USB devices active, no real disks will be touched")
 
-    log.info("Storage mode : %s", "LOCAL" if config.STORAGE_LOCAL else "SSHD")
+    log.info("SSD_DIR      : %s", config.SSD_DIR)
     log.info("IMG_DIR      : %s", config.IMG_DIR)
     log.info("Starting on  : http://0.0.0.0:5000")
     socketio.run(app, host="0.0.0.0", port=5000, debug=False)
