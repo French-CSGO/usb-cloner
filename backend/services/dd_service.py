@@ -14,6 +14,7 @@ import logging
 import os
 import random
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -25,6 +26,23 @@ log = logging.getLogger("usb-manager")
 # ── in-memory job registry ────────────────────────────────────────
 jobs: dict[str, dict] = {}
 _lock = threading.Lock()
+_cancelled: set[str] = set()  # task_ids requested for cancellation
+
+
+def cancel_task(job_id: str, task_id: str) -> bool:
+    with _lock:
+        task = jobs.get(job_id, {}).get("tasks", {}).get(task_id)
+        if not task or task.get("status") not in ("running", "pending"):
+            return False
+        pid = task.get("pid")
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        _cancelled.add(task_id)
+        task.update({"status": "cancelled"})
+    return True
 
 _PROGRESS_RE = re.compile(
     r"(\d+)\s+bytes[^,]*,\s*([\d.]+)\s+s,\s*([\d.]+\s+[KMGT]?B/s)"
@@ -83,6 +101,10 @@ def _simulate_dd(src: str, dst: str, total_bytes: int,
         })
 
     for i in range(1, steps + 1):
+        if task_id in _cancelled:
+            _cancelled.discard(task_id)
+            return False
+
         frac      = i / steps
         bytes_done = int(display_total * frac)
         elapsed    = round(duration * frac, 1)
@@ -101,6 +123,13 @@ def _simulate_dd(src: str, dst: str, total_bytes: int,
             jobs[job_id]["tasks"][task_id].update(data)
         socketio.emit("progress", data)
         time.sleep(duration / steps)
+
+    # Create a stub file when saving to a non-device path (e.g. joueurs/*.img)
+    if not dst.startswith("/dev/"):
+        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+        if not os.path.exists(dst):
+            with open(dst, "wb") as f:
+                f.write(b"\x00" * 1024)
 
     return True
 

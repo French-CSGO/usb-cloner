@@ -220,7 +220,9 @@ function renderTasks() {
     const status = t.status  || 'pending';
     const speed  = t.speed   || '—';
     const label  = t.label   || t.task_id;
-    const eta    = t.eta != null ? `ETA ${fmtEta(t.eta)}` : '';
+    const cancelBtn = (status === 'running' || status === 'pending')
+      ? `<button class="task-cancel" title="Cancel" onclick="cancelTask('${esc(t.job_id)}','${esc(t.task_id)}')">✕</button>`
+      : '';
     return `
       <div class="task-row">
         <span class="task-label" title="${esc(label)}">${esc(label)}</span>
@@ -230,8 +232,14 @@ function renderTasks() {
         <span class="task-pct">${pct}%</span>
         <span class="task-speed">${esc(speed)}</span>
         <span class="task-status ${status}">${status}</span>
+        ${cancelBtn}
       </div>`;
   }).join('');
+}
+
+async function cancelTask(jobId, taskId) {
+  await api('DELETE', `/jobs/${jobId}/tasks/${taskId}`).catch(() => null);
+  log(`Task ${taskId} cancelled`, 'warn');
 }
 
 // ── tabs ──────────────────────────────────────────────────────

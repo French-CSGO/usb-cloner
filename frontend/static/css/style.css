@@ -457,13 +457,25 @@ body {
 
 .task-row {
   display: grid;
-  grid-template-columns: 200px 1fr 60px 80px 60px;
+  grid-template-columns: 200px 1fr 60px 80px 60px 20px;
   align-items: center;
   gap: 10px;
   padding: 5px 16px;
   border-bottom: 1px solid var(--border);
   font-size: 10px;
 }
+
+.task-cancel {
+  background: none;
+  border: none;
+  color: var(--txt3);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  line-height: 1;
+}
+.task-cancel:hover { color: var(--red); }
+.task-status.cancelled { color: var(--txt3); }
 
 .task-label { color: var(--txt); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
