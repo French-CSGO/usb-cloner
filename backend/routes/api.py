@@ -240,6 +240,18 @@ def get_job(job_id):
     return jsonify(job) if job else _err("not found", 404)
 
 
+@api.delete("/jobs/<job_id>/tasks/<task_id>")
+def cancel_task(job_id, task_id):
+    ok = dd_service.cancel_task(job_id, task_id)
+    if ok:
+        _sio.emit("progress", {
+            "job_id": job_id, "task_id": task_id,
+            "status": "cancelled", "percent":
+                dd_service.jobs[job_id]["tasks"][task_id].get("percent", 0),
+        })
+    return _ok() if ok else _err("task not found or already finished", 404)
+
+
 # ── operations ────────────────────────────────────────────────────
 
 @api.post("/operations/create-master")
