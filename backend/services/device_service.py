@@ -8,6 +8,38 @@ from config import ASSOC_FILE, SSHD_MOUNT
 # Persists which disks the user has manually tagged as USB keys
 _USB_SEL_FILE = os.environ.get("USB_SEL_FILE", "/data/usb_selection.conf")
 
+# ── demo devices ─────────────────────────────────────────────────
+
+_DEMO_DEVICES_FULL = [
+    {
+        "name": "sdc", "size": "32G", "tran": "usb",
+        "vendor": "SanDisk", "model": "Ultra USB 3.0",
+        "mountpoint": "", "is_sshd": False, "is_usb": True,
+        "partitions": [
+            {"name": "sdc1", "size": "16G", "mountpoint": "", "fstype": "ntfs"},
+            {"name": "sdc2", "size": "14G", "mountpoint": "", "fstype": "ntfs"},
+        ],
+    },
+    {
+        "name": "sdd", "size": "32G", "tran": "usb",
+        "vendor": "Kingston", "model": "DataTraveler 100 G3",
+        "mountpoint": "", "is_sshd": False, "is_usb": True,
+        "partitions": [
+            {"name": "sdd1", "size": "16G", "mountpoint": "", "fstype": "ntfs"},
+            {"name": "sdd2", "size": "14G", "mountpoint": "", "fstype": "ntfs"},
+        ],
+    },
+    {
+        "name": "sde", "size": "64G", "tran": "usb",
+        "vendor": "Samsung", "model": "FIT Plus",
+        "mountpoint": "", "is_sshd": False, "is_usb": True,
+        "partitions": [
+            {"name": "sde1", "size": "32G", "mountpoint": "", "fstype": "ntfs"},
+            {"name": "sde2", "size": "30G", "mountpoint": "", "fstype": "ntfs"},
+        ],
+    },
+]
+
 
 def _run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
@@ -18,10 +50,12 @@ def _run(cmd):
 def get_all_disks_full():
     """
     Return all non-loop block devices with their partitions.
-    Each disk dict:
-      { name, size, tran, vendor, model, is_usb, mountpoint,
-        partitions: [ {name, size, mountpoint, fstype} ] }
+    In DEMO_MODE, returns a fixed set of fake USB drives.
     """
+    from config import DEMO_MODE
+    if DEMO_MODE:
+        return [dict(d) for d in _DEMO_DEVICES_FULL]
+
     r = _run([
         "lsblk", "-o",
         "NAME,SIZE,TYPE,TRAN,VENDOR,MODEL,MOUNTPOINT,FSTYPE",

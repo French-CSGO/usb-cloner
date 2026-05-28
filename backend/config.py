@@ -15,3 +15,7 @@ STORAGE_LOCAL = (
     os.environ.get("STORAGE_LOCAL", "").lower() in ("1", "true", "yes")
     or not IMG_DIR.startswith(SSHD_MOUNT)
 )
+
+# Demo mode: fake USB devices + simulated dd progress, no real disks needed.
+DEMO_MODE = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
+
