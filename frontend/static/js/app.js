@@ -88,12 +88,41 @@ async function pollAll() {
 }
 
 async function refreshMount() {
-  const d = await api('GET', '/mount/status').catch(() => null);
+  const d = await api('GET', '/storage/info').catch(() => null);
   if (!d) return;
-  state.sshdMounted = d.mounted;
-  const badge = document.getElementById('sshd-badge');
-  badge.textContent = d.mounted ? 'MOUNTED' : 'UNMOUNTED';
-  badge.className   = 'sshd-badge ' + (d.mounted ? 'mounted' : 'unmounted');
+  state.sshdMounted   = d.mounted;
+  state.storageLocal  = d.mode === 'local';
+  state.storagePath   = d.path;
+
+  const block = document.getElementById('storage-block');
+
+  if (d.mode === 'local') {
+    block.innerHTML = `
+      <div class="sshd-row">
+        <span class="sshd-label">Local Storage</span>
+        <span class="sshd-badge mounted">LOCAL</span>
+      </div>
+      <div style="font-size:10px;color:var(--txt2);margin-top:4px;word-break:break-all">
+        ${esc(d.path)}
+      </div>
+      <div class="sshd-actions" style="margin-top:6px">
+        <button class="btn btn-ghost btn-sm" onclick="refreshDevices()">⟳ Refresh</button>
+      </div>`;
+  } else {
+    const ok = d.mounted;
+    block.innerHTML = `
+      <div class="sshd-row">
+        <span class="sshd-label">SSHD / Storage</span>
+        <span class="sshd-badge ${ok ? 'mounted' : 'unmounted'}" id="sshd-badge">
+          ${ok ? 'MOUNTED' : 'UNMOUNTED'}
+        </span>
+      </div>
+      <div class="sshd-actions">
+        <button class="btn btn-green btn-sm" onclick="openModal('sshd-mount')">Mount</button>
+        <button class="btn btn-ghost btn-sm" onclick="doUnmountSshd()">Unmount</button>
+        <button class="btn btn-ghost btn-sm" onclick="refreshDevices()">⟳</button>
+      </div>`;
+  }
 }
 
 async function refreshDevices() {

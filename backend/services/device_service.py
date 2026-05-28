@@ -130,6 +130,14 @@ def is_sshd_mounted() -> bool:
     return _run(["mountpoint", "-q", SSHD_MOUNT]).returncode == 0
 
 
+def is_storage_ready() -> bool:
+    """True if storage is accessible — either a local dir or SSHD mounted."""
+    from config import STORAGE_LOCAL, IMG_DIR
+    if STORAGE_LOCAL:
+        return True  # local dir is always accessible
+    return is_sshd_mounted()
+
+
 def mount_sshd(disk: str):
     os.makedirs(SSHD_MOUNT, exist_ok=True)
     for dev in [f"/dev/{disk}1", f"/dev/{disk}"]:

@@ -38,5 +38,8 @@ def on_connect():
 
 
 if __name__ == "__main__":
+    import config
     os.makedirs("/data", exist_ok=True)
+    if config.STORAGE_LOCAL:
+        os.makedirs(config.JOUEURS_DIR, exist_ok=True)
     socketio.run(app, host="0.0.0.0", port=5000, debug=False)

@@ -9,19 +9,28 @@ services:
     privileged: true
 
     volumes:
-      - /dev:/dev                   # expose all block devices
-      - /mnt:/mnt                   # share host mount namespace
-      - ./data:/data                # persistent logs + associations
+      - /dev:/dev        # expose all block devices
+      - /mnt:/mnt        # share host mount namespace (SSHD mode only)
+      - ./data:/data     # persistent logs, associations, local images
 
     ports:
       - "5000:5000"
 
+    # ── SSHD mode (external disk) ────────────────────────────────
+    # Images live on a mounted external disk. Use the "Mount SSHD"
+    # button in the UI to attach it before running any operation.
+    #
+    # environment:
+    #   IMG_DIR:      /mnt/sshd/images
+    #   JOUEURS_DIR:  /mnt/sshd/images/joueurs
+    #   HISTORY_FILE: /mnt/sshd/historique_tournoi.log
+
+    # ── Local mode (folder on the host) ─────────────────────────
+    # No external disk needed. Images are stored in ./data/images
+    # on your machine. No mount step required — ready immediately.
     environment:
-      SSHD_MOUNT:   /mnt/sshd
-      IMG_DIR:      /mnt/sshd/images
-      JOUEURS_DIR:  /mnt/sshd/images/joueurs
-      WIN_IMG:      /mnt/sshd/images/windows_base.img
-      CS2_IMG:      /mnt/sshd/images/cs2_vierge.img
+      IMG_DIR:      /data/images
+      JOUEURS_DIR:  /data/images/joueurs
+      HISTORY_FILE: /data/historique_tournoi.log
       LOG_FILE:     /data/usb_manager.log
-      HISTORY_FILE: /mnt/sshd/historique_tournoi.log
       ASSOC_FILE:   /data/usb_associations.conf
