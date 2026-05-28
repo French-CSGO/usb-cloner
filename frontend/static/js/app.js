@@ -155,8 +155,7 @@ async function refreshProfiles() {
 async function refreshTeams() {
   state.teams = await api('GET', '/teams').catch(() => []);
   renderTeamSelector();
-  if (document.getElementById('modal-teams') &&
-      !document.getElementById('modal-teams').classList.contains('hidden')) {
+  if (document.getElementById('modal-teams')?.classList.contains('hidden')) {
     renderTeamsList();
   }
 }
