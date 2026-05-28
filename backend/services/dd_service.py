@@ -102,6 +102,13 @@ def _simulate_dd(src: str, dst: str, total_bytes: int,
         socketio.emit("progress", data)
         time.sleep(duration / steps)
 
+    # Create a stub file when saving to a non-device path (e.g. joueurs/*.img)
+    if not dst.startswith("/dev/"):
+        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+        if not os.path.exists(dst):
+            with open(dst, "wb") as f:
+                f.write(b"\x00" * 1024)
+
     return True
 
 
