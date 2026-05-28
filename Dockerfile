@@ -3,6 +3,9 @@ FROM python:3.11-slim
 LABEL org.opencontainers.image.source="https://github.com/french-csgo/usb-cloner"
 LABEL org.opencontainers.image.description="USB Key Manager — CS2 Tournament"
 
+# Flush stdout/stderr immediately — required to see logs in docker logs
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

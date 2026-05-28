@@ -4,7 +4,7 @@ import threading
 from flask import Blueprint, jsonify, request
 
 import config as _cfg
-from config import CS2_IMG, HISTORY_FILE, IMG_DIR, JOUEURS_DIR, WIN_IMG
+from config import CS2_IMG, HISTORY_FILE, IMG_DIR, JOUEURS_DIR, SSD_DIR, WIN_IMG
 from services import dd_service, device_service, profile_service
 
 api = Blueprint("api", __name__)
@@ -30,24 +30,18 @@ def _bg(fn, *args):
     threading.Thread(target=fn, args=args, daemon=True).start()
 
 
-# ── storage (SSHD or local) ───────────────────────────────────────
+# ── storage ───────────────────────────────────────────────────────
 
 @api.get("/storage/info")
 def storage_info():
-    if _cfg.STORAGE_LOCAL:
-        os.makedirs(_cfg.JOUEURS_DIR, exist_ok=True)
-        return jsonify({
-            "mode":    "local",
-            "ready":   True,
-            "mounted": True,
-            "path":    _cfg.IMG_DIR,
-        })
-    mounted = device_service.is_sshd_mounted()
+    sshd_mounted = device_service.is_sshd_mounted()
+    os.makedirs(_cfg.SSD_JOUEURS_DIR, exist_ok=True)
     return jsonify({
-        "mode":    "sshd",
-        "ready":   mounted,
-        "mounted": mounted,
-        "path":    _cfg.SSHD_MOUNT,
+        "ssd":  {"path": _cfg.SSD_DIR,  "ready": True},
+        "sshd": {"path": _cfg.SSHD_DIR, "mounted": sshd_mounted},
+        # legacy fields kept for backward compat
+        "mode": "dual", "mounted": sshd_mounted,
+        "ready": True, "path": _cfg.SSD_DIR,
     })
 
 
@@ -58,22 +52,18 @@ def mount_status():
 
 @api.post("/mount")
 def mount():
-    if _cfg.STORAGE_LOCAL:
-        return _err("Storage is local — no mount needed")
     disk = (request.json or {}).get("disk", "")
     if not disk:
         return _err("disk required")
     ok, msg = device_service.mount_sshd(disk)
     if ok:
-        os.makedirs(JOUEURS_DIR, exist_ok=True)
+        os.makedirs(_cfg.SSHD_JOUEURS_DIR, exist_ok=True)
     return (jsonify({"success": ok, "message": msg}),
             200 if ok else 500)
 
 
 @api.delete("/mount")
 def unmount():
-    if _cfg.STORAGE_LOCAL:
-        return _err("Storage is local — nothing to unmount")
     ok = device_service.unmount_sshd()
     return jsonify({"success": ok})
 
@@ -86,7 +76,7 @@ def list_devices():
     assoc = device_service.load_associations()
     disks = device_service.get_usb_disks()
     for d in disks:
-        d["player"] = assoc.get(d["name"])
+        d["player"] = assoc.get(d["uid"]) or assoc.get(d["name"])
     return jsonify(disks)
 
 
@@ -96,7 +86,7 @@ def list_all_disks():
     assoc  = device_service.load_associations()
     disks  = device_service.get_all_disks_full()
     for d in disks:
-        d["player"] = assoc.get(d["name"])
+        d["player"] = assoc.get(d["uid"]) or assoc.get(d["name"])
     return jsonify(disks)
 
 
@@ -125,12 +115,28 @@ def list_images():
 
 @api.get("/profiles")
 def list_profiles():
-    return jsonify(profile_service.list_profiles())
+    return jsonify(profile_service.list_profiles_ssd())
+
+
+@api.get("/profiles/ssd")
+def list_profiles_ssd():
+    return jsonify(profile_service.list_profiles_ssd())
+
+
+@api.get("/profiles/sshd")
+def list_profiles_sshd():
+    return jsonify(profile_service.list_profiles_sshd())
+
+
+@api.get("/profiles/combined")
+def list_profiles_combined():
+    return jsonify(profile_service.list_profiles_combined())
 
 
 @api.delete("/profiles/<name>")
 def delete_profile(name):
-    ok = profile_service.delete_profile(name)
+    storage = request.args.get("storage", "ssd")
+    ok = profile_service.delete_profile(name, storage)
     return _ok() if ok else _err(f"Profile '{name}' not found", 404)
 
 
@@ -147,6 +153,54 @@ def copy_profile():
     d = request.json or {}
     ok = profile_service.copy_profile(d.get("src", ""), d.get("dst", ""))
     return _ok() if ok else _err("Source profile not found", 404)
+
+
+# ── sync ──────────────────────────────────────────────────────────
+
+@api.post("/sync/pull")
+def sync_pull():
+    """Pull profiles SSHD → SSD."""
+    d     = request.json or {}
+    names = d.get("names") or [p["name"] for p in profile_service.list_profiles_sshd()]
+    if not names:
+        return _err("No profiles on SSHD to pull")
+    if not device_service.is_sshd_mounted():
+        return _err("SSHD not mounted")
+
+    job_id = dd_service.create_job("sync_pull", [f"pull:{n}" for n in names])
+
+    def _run():
+        results = profile_service.sync_pull(names, job_id, _sio)
+        ok  = sum(1 for v in results.values() if v)
+        err = len(results) - ok
+        dd_service.jobs[job_id]["status"] = "done"
+        _sio.emit("job_complete", {"job_id": job_id, "ok": ok, "errors": err})
+
+    _bg(_run)
+    return _ok(job_id=job_id)
+
+
+@api.post("/sync/push")
+def sync_push():
+    """Push profiles SSD → SSHD."""
+    d     = request.json or {}
+    names = d.get("names") or [p["name"] for p in profile_service.list_profiles_ssd()]
+    if not names:
+        return _err("No profiles on SSD to push")
+    if not device_service.is_sshd_mounted():
+        return _err("SSHD not mounted")
+
+    job_id = dd_service.create_job("sync_push", [f"push:{n}" for n in names])
+
+    def _run():
+        results = profile_service.sync_push(names, job_id, _sio)
+        ok  = sum(1 for v in results.values() if v)
+        err = len(results) - ok
+        dd_service.jobs[job_id]["status"] = "done"
+        _sio.emit("job_complete", {"job_id": job_id, "ok": ok, "errors": err})
+
+    _bg(_run)
+    return _ok(job_id=job_id)
 
 
 # ── assignments ───────────────────────────────────────────────────
@@ -257,9 +311,13 @@ def save_players():
     if not assoc:
         return _err("No assignments — use Assign Players first")
 
+    dev_assoc = device_service.resolve_to_devices(assoc)
+    if not dev_assoc:
+        return _err("No connected keys match current assignments")
+
     os.makedirs(JOUEURS_DIR, exist_ok=True)
     tasks = {}
-    for disk, player in assoc.items():
+    for disk, player in dev_assoc.items():
         src = f"/dev/{disk}{p_cs2}"
         dst = os.path.join(JOUEURS_DIR, f"{player}.img")
         tasks[f"{disk}:{player}"] = (src, dst, dd_service.get_size(src),
@@ -269,7 +327,7 @@ def save_players():
 
     def _run():
         dd_service.run_parallel(job_id, tasks, _sio)
-        profile_service.log_history(f"Save: {len(assoc)} players")
+        profile_service.log_history(f"Save: {len(dev_assoc)} players")
 
     _bg(_run)
     return _ok(job_id=job_id)
@@ -284,8 +342,12 @@ def load_players():
     if not assoc:
         return _err("No assignments")
 
+    dev_assoc = device_service.resolve_to_devices(assoc)
+    if not dev_assoc:
+        return _err("No connected keys match current assignments")
+
     tasks = {}
-    for disk, player in assoc.items():
+    for disk, player in dev_assoc.items():
         img = os.path.join(JOUEURS_DIR, f"{player}.img")
         src = img if os.path.exists(img) else CS2_IMG
         dst = f"/dev/{disk}{p_cs2}"
@@ -296,7 +358,7 @@ def load_players():
 
     def _run():
         dd_service.run_parallel(job_id, tasks, _sio)
-        profile_service.log_history(f"Load: {len(assoc)} players")
+        profile_service.log_history(f"Load: {len(dev_assoc)} players")
 
     _bg(_run)
     return _ok(job_id=job_id)
@@ -340,7 +402,10 @@ def change_player():
         return _err("disk and new_player required")
 
     assoc      = device_service.load_associations()
-    old_player = assoc.get(disk)
+    # Resolve device name → uid for stable storage
+    name_to_uid = {v: k for k, v in device_service.uid_to_name_map().items()}
+    uid        = name_to_uid.get(disk, disk)
+    old_player = assoc.get(uid) or assoc.get(disk)
     tasks      = {}
 
     if old_player and save_old:
@@ -360,7 +425,9 @@ def change_player():
     def _run():
         # Sequential: save first, then load
         dd_service.run_parallel(job_id, tasks, _sio, sequential=True)
-        assoc[disk] = new_player
+        # Save by uid (stable across replug); remove any legacy disk-name entry
+        assoc.pop(disk, None)
+        assoc[uid] = new_player
         device_service.save_associations(assoc)
         profile_service.log_history(
             f"Player changed /dev/{disk}: {old_player} → {new_player}")

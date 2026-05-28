@@ -1,21 +1,30 @@
 import os
 
-SSHD_MOUNT   = os.environ.get("SSHD_MOUNT",   "/mnt/sshd")
-IMG_DIR      = os.environ.get("IMG_DIR",       "/mnt/sshd/images")
-JOUEURS_DIR  = os.environ.get("JOUEURS_DIR",   "/mnt/sshd/images/joueurs")
-WIN_IMG      = os.path.join(IMG_DIR, "windows_base.img")
-CS2_IMG      = os.path.join(IMG_DIR, "cs2_vierge.img")
-LOG_FILE     = os.environ.get("LOG_FILE",      "/data/usb_manager.log")
-HISTORY_FILE = os.environ.get("HISTORY_FILE",  "/data/historique_tournoi.log")
-ASSOC_FILE   = os.environ.get("ASSOC_FILE",    "/data/usb_associations.conf")
+# ── Fast local SSD (always available) ────────────────────────────
+# Master images + active player profiles live here for max speed.
+SSD_DIR         = os.environ.get("SSD_DIR",
+                  os.environ.get("IMG_DIR", "/data/images"))
+SSD_JOUEURS_DIR = os.environ.get("SSD_JOUEURS_DIR",
+                  os.environ.get("JOUEURS_DIR", os.path.join(SSD_DIR, "joueurs")))
+WIN_IMG         = os.path.join(SSD_DIR, "windows_base.img")
+CS2_IMG         = os.path.join(SSD_DIR, "cs2_vierge.img")
 
-# True when IMG_DIR is a local path (not under SSHD_MOUNT).
-# Can also be forced with STORAGE_LOCAL=1.
-STORAGE_LOCAL = (
-    os.environ.get("STORAGE_LOCAL", "").lower() in ("1", "true", "yes")
-    or not IMG_DIR.startswith(SSHD_MOUNT)
-)
+# ── SSHD external storage (optional, mount on demand) ────────────
+# Permanent archive of all player profiles across tournaments.
+SSHD_MOUNT      = os.environ.get("SSHD_MOUNT",      "/mnt/sshd")
+SSHD_DIR        = os.environ.get("SSHD_DIR",
+                  os.environ.get("IMG_DIR_SSHD",     "/mnt/sshd/images"))
+SSHD_JOUEURS_DIR = os.environ.get("SSHD_JOUEURS_DIR",
+                   os.path.join(SSHD_DIR, "joueurs"))
+HISTORY_FILE    = os.environ.get("HISTORY_FILE",     "/data/historique_tournoi.log")
 
-# Demo mode: fake USB devices + simulated dd progress, no real disks needed.
-DEMO_MODE = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
+# ── Misc ─────────────────────────────────────────────────────────
+LOG_FILE        = os.environ.get("LOG_FILE",         "/data/usb_manager.log")
+ASSOC_FILE      = os.environ.get("ASSOC_FILE",       "/data/usb_associations.conf")
 
+# Backward-compat aliases
+IMG_DIR         = SSD_DIR
+JOUEURS_DIR     = SSD_JOUEURS_DIR
+
+# Demo mode: fake USB devices + simulated dd, no real disks touched.
+DEMO_MODE       = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")

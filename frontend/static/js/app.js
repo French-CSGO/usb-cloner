@@ -90,39 +90,33 @@ async function pollAll() {
 async function refreshMount() {
   const d = await api('GET', '/storage/info').catch(() => null);
   if (!d) return;
-  state.sshdMounted   = d.mounted;
-  state.storageLocal  = d.mode === 'local';
-  state.storagePath   = d.path;
+  state.sshdMounted = d.sshd?.mounted ?? d.mounted ?? false;
+  state.ssdPath     = d.ssd?.path  ?? d.path ?? '';
+  state.sshdPath    = d.sshd?.path ?? '';
 
-  const block = document.getElementById('storage-block');
-
-  if (d.mode === 'local') {
-    block.innerHTML = `
-      <div class="sshd-row">
-        <span class="sshd-label">Local Storage</span>
-        <span class="sshd-badge mounted">LOCAL</span>
+  const sshd = state.sshdMounted;
+  document.getElementById('storage-block').innerHTML = `
+    <div class="storage-row">
+      <span class="storage-icon">💾</span>
+      <div class="storage-info">
+        <span class="storage-label">SSD</span>
+        <span class="storage-path">${esc(state.ssdPath)}</span>
       </div>
-      <div style="font-size:10px;color:var(--txt2);margin-top:4px;word-break:break-all">
-        ${esc(d.path)}
+      <span class="sshd-badge mounted">READY</span>
+    </div>
+    <div class="storage-row" style="margin-top:6px">
+      <span class="storage-icon">🗄️</span>
+      <div class="storage-info">
+        <span class="storage-label">SSHD</span>
+        <span class="storage-path">${esc(state.sshdPath)}</span>
       </div>
-      <div class="sshd-actions" style="margin-top:6px">
-        <button class="btn btn-ghost btn-sm" onclick="refreshDevices()">⟳ Refresh</button>
-      </div>`;
-  } else {
-    const ok = d.mounted;
-    block.innerHTML = `
-      <div class="sshd-row">
-        <span class="sshd-label">SSHD / Storage</span>
-        <span class="sshd-badge ${ok ? 'mounted' : 'unmounted'}" id="sshd-badge">
-          ${ok ? 'MOUNTED' : 'UNMOUNTED'}
-        </span>
-      </div>
-      <div class="sshd-actions">
-        <button class="btn btn-green btn-sm" onclick="openModal('sshd-mount')">Mount</button>
-        <button class="btn btn-ghost btn-sm" onclick="doUnmountSshd()">Unmount</button>
-        <button class="btn btn-ghost btn-sm" onclick="refreshDevices()">⟳</button>
-      </div>`;
-  }
+      <span class="sshd-badge ${sshd ? 'mounted' : 'unmounted'}">${sshd ? 'MOUNTED' : 'UNMOUNTED'}</span>
+    </div>
+    <div class="sshd-actions" style="margin-top:8px">
+      <button class="btn btn-green btn-sm" onclick="openModal('sshd-mount')">Mount</button>
+      <button class="btn btn-ghost btn-sm" onclick="doUnmountSshd()">Unmount</button>
+      <button class="btn btn-ghost btn-sm" onclick="refreshDevices()">⟳</button>
+    </div>`;
 }
 
 async function refreshDevices() {
@@ -133,14 +127,23 @@ async function refreshDevices() {
   state.devices     = devs;
   state.assignments = assoc;
   renderDevices();
-  updateAssignModal();
+  // Only rebuild assign modal if it is NOT currently open — prevents wiping
+  // fields the user is actively filling in during auto-refresh.
+  if (document.getElementById('modal-assign').classList.contains('hidden')) {
+    updateAssignModal();
+  }
   updateChangeDiskSelect();
 }
 
 async function refreshProfiles() {
-  const profs = await api('GET', '/profiles').catch(() => []);
-  state.profiles = profs;
+  const [ssd, combined] = await Promise.all([
+    api('GET', '/profiles/ssd').catch(() => []),
+    api('GET', '/profiles/combined').catch(() => []),
+  ]);
+  state.profiles         = ssd;
+  state.profilesCombined = combined;
   renderProfiles();
+  renderSyncTable();
 }
 
 // Auto-refresh every 10 s
@@ -154,11 +157,13 @@ function renderDevices() {
     return;
   }
   el.innerHTML = state.devices.map(d => {
-    const player = d.player || state.assignments[d.name];
+    const player = d.player || state.assignments[d.uid] || state.assignments[d.name];
     const playerHtml = player
       ? `<span class="player-badge">${esc(player)}</span>`
       : `<span class="no-player">unassigned</span>`;
-    const model = [d.vendor, d.model].filter(Boolean).join(' ').trim() || d.tran;
+    const model  = [d.vendor, d.model].filter(Boolean).join(' ').trim() || d.tran;
+    const serial = d.serial
+      ? `<div class="device-serial">S/N ${esc(d.serial)}</div>` : '';
     return `
       <div class="device-card" onclick="selectDevice('${esc(d.name)}')">
         <div class="device-name">
@@ -166,6 +171,7 @@ function renderDevices() {
           <span class="size-tag">${esc(d.size)}</span>
         </div>
         <div class="device-vendor">${esc(model)}</div>
+        ${serial}
         <div class="device-player">${playerHtml}</div>
       </div>`;
   }).join('');
@@ -226,6 +232,14 @@ function renderTasks() {
         <span class="task-status ${status}">${status}</span>
       </div>`;
   }).join('');
+}
+
+// ── tabs ──────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
+  document.getElementById(`tab-${name}`)?.classList.add('active');
+  document.getElementById(`pane-${name}`)?.classList.remove('hidden');
 }
 
 // ── modal helpers ─────────────────────────────────────────────
@@ -351,11 +365,13 @@ function updateAssignModal() {
     return;
   }
   container.innerHTML = state.devices.map(d => {
-    const current = state.assignments[d.name] || '';
+    const current = state.assignments[d.uid] || state.assignments[d.name] || '';
+    const serialNote = d.serial
+      ? `<span class="assign-serial">${esc(d.serial)}</span>` : '';
     return `
       <div class="form-field">
-        <label>/dev/${esc(d.name)} (${esc(d.size)})</label>
-        <input type="text" class="assign-input" data-disk="${esc(d.name)}"
+        <label>/dev/${esc(d.name)} — ${esc(d.size)} ${serialNote}</label>
+        <input type="text" class="assign-input" data-uid="${esc(d.uid)}"
                value="${esc(current)}" placeholder="player name (blank = skip)">
       </div>`;
   }).join('');
@@ -363,12 +379,16 @@ function updateAssignModal() {
 
 async function doAssign() {
   const inputs = document.querySelectorAll('.assign-input');
-  const newAssoc = { ...state.assignments };
+  // Preserve assignments for keys not currently connected (they keep their uid entry)
+  const currentUids = new Set(state.devices.map(d => d.uid));
+  const newAssoc = {};
+  for (const [k, v] of Object.entries(state.assignments)) {
+    if (!currentUids.has(k)) newAssoc[k] = v;
+  }
   inputs.forEach(inp => {
-    const disk   = inp.dataset.disk;
+    const uid    = inp.dataset.uid;
     const player = inp.value.trim();
-    if (player) newAssoc[disk] = player;
-    else        delete newAssoc[disk];
+    if (player) newAssoc[uid] = player;
   });
   closeModal('assign');
   await api('POST', '/assignments', newAssoc);
@@ -381,9 +401,10 @@ async function doAssign() {
 // ── change player ─────────────────────────────────────────────
 function updateChangeDiskSelect() {
   const sel = document.getElementById('change-disk');
-  sel.innerHTML = state.devices.map(d =>
-    `<option value="${esc(d.name)}">/dev/${esc(d.name)} — ${esc(d.player || state.assignments[d.name] || 'unassigned')}</option>`
-  ).join('');
+  sel.innerHTML = state.devices.map(d => {
+    const player = d.player || state.assignments[d.uid] || state.assignments[d.name] || 'unassigned';
+    return `<option value="${esc(d.name)}">/dev/${esc(d.name)} — ${esc(player)}</option>`;
+  }).join('');
 }
 
 async function doChangePlayer() {
@@ -429,6 +450,55 @@ async function doCopyProfile() {
   toast(`Copied ${src} → ${dst}`, 'ok');
   log(`Profile copied: ${src} → ${dst}`, 'ok');
   await refreshProfiles();
+}
+
+// ── dual storage sync ─────────────────────────────────────────
+
+function renderSyncTable() {
+  const el = document.getElementById('sync-table');
+  if (!el) return;
+  const rows = state.profilesCombined || [];
+  if (!rows.length) {
+    el.innerHTML = '<div class="no-profiles">No profiles on either storage</div>';
+    return;
+  }
+  el.innerHTML = rows.map(p => {
+    const onSsd  = p.on_ssd;
+    const onSshd = p.on_sshd;
+    const ssdIcon  = onSsd  ? '<span style="color:var(--green)">SSD ✓</span>'
+                            : '<span style="color:var(--txt3)">SSD —</span>';
+    const sshdIcon = onSshd ? '<span style="color:var(--cyan)">SSHD ✓</span>'
+                            : '<span style="color:var(--txt3)">SSHD —</span>';
+    const pullBtn = onSshd
+      ? `<button class="btn btn-ghost btn-sm" onclick="syncOne('pull','${esc(p.name)}')">↓ Pull</button>`
+      : '';
+    const pushBtn = onSsd
+      ? `<button class="btn btn-ghost btn-sm" onclick="syncOne('push','${esc(p.name)}')">↑ Push</button>`
+      : '';
+    return `
+      <div class="profile-row">
+        <span class="profile-name">${esc(p.name)}</span>
+        <span style="display:flex;gap:6px;font-size:10px">${ssdIcon} ${sshdIcon}</span>
+        <div class="profile-actions">${pullBtn}${pushBtn}
+          <button class="icon-btn del" title="Delete from SSD"
+            onclick="deleteProfile('${esc(p.name)}')">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function syncAll(direction) {
+  if (!state.sshdMounted) { toast('SSHD not mounted', 'err'); return; }
+  log(`Sync ${direction === 'pull' ? 'SSHD→SSD' : 'SSD→SSHD'} (all)…`, 'info');
+  const r = await api('POST', `/sync/${direction}`).catch(() => null);
+  if (r?.job_id) toast(`Sync job ${r.job_id} started`, 'info');
+}
+
+async function syncOne(direction, name) {
+  if (!state.sshdMounted) { toast('SSHD not mounted', 'err'); return; }
+  log(`Sync ${direction} ${name}…`, 'info');
+  const r = await api('POST', `/sync/${direction}`, { names: [name] }).catch(() => null);
+  if (r?.job_id) toast(`Sync ${name} started`, 'info');
 }
 
 // ── disk browser ─────────────────────────────────────────────

@@ -17,23 +17,18 @@ services:
       - "5000:5000"
 
     environment:
+      PYTHONUNBUFFERED: "1"
       # Always local — never change these
       LOG_FILE:   /data/usb_manager.log
       ASSOC_FILE: /data/usb_associations.conf
 
-      # ── Local mode (no external disk) ───────────────────────────
-      # Images stored in ./data/images on the host. Ready immediately.
-      IMG_DIR:      /data/images
-      JOUEURS_DIR:  /data/images/joueurs
-      HISTORY_FILE: /data/historique_tournoi.log
-
-      # ── SSHD mode (external disk) ───────────────────────────────
-      # Uncomment these 3 lines and comment the 3 above.
-      # Use "Mount SSHD" in the UI before running any operation.
-      #
-      # IMG_DIR:      /mnt/sshd/images
-      # JOUEURS_DIR:  /mnt/sshd/images/joueurs
-      # HISTORY_FILE: /mnt/sshd/historique_tournoi.log
+      # ── Dual storage ─────────────────────────────────────────────
+      # SSD  = fast local storage (master images + active profiles)
+      # SSHD = external disk mounted on demand (permanent archive)
+      SSD_DIR:          /data/images          # embedded SSD
+      SSD_JOUEURS_DIR:  /data/images/joueurs
+      SSHD_DIR:         /mnt/sshd/images      # external SSHD
+      SSHD_JOUEURS_DIR: /mnt/sshd/images/joueurs
 
   # ── Demo mode ─────────────────────────────────────────────────────
   # No USB keys needed. Fake drives (sdc/sdd/sde) appear in the UI
@@ -49,9 +44,12 @@ services:
     volumes:
       - ./data:/data
     environment:
-      DEMO_MODE:    "1"
-      IMG_DIR:      /data/images
-      JOUEURS_DIR:  /data/images/joueurs
-      HISTORY_FILE: /data/historique_tournoi.log
-      LOG_FILE:     /data/usb_manager.log
-      ASSOC_FILE:   /data/usb_associations.conf
+      PYTHONUNBUFFERED: "1"
+      DEMO_MODE:        "1"
+      SSD_DIR:          /data/images
+      SSD_JOUEURS_DIR:  /data/images/joueurs
+      SSHD_DIR:         /mnt/sshd/images
+      SSHD_JOUEURS_DIR: /mnt/sshd/images/joueurs
+      HISTORY_FILE:     /data/historique_tournoi.log
+      LOG_FILE:         /data/usb_manager.log
+      ASSOC_FILE:       /data/usb_associations.conf
