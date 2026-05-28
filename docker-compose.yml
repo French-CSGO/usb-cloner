@@ -17,6 +17,7 @@ services:
       - "5000:5000"
 
     environment:
+      PYTHONUNBUFFERED: "1"
       # Always local — never change these
       LOG_FILE:   /data/usb_manager.log
       ASSOC_FILE: /data/usb_associations.conf
@@ -49,6 +50,7 @@ services:
     volumes:
       - ./data:/data
     environment:
+      PYTHONUNBUFFERED: "1"
       DEMO_MODE:    "1"
       IMG_DIR:      /data/images
       JOUEURS_DIR:  /data/images/joueurs

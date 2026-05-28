@@ -10,6 +10,7 @@ Job-complete event shape:
   { job_id, ok, errors }
 """
 
+import logging
 import os
 import random
 import re
@@ -18,6 +19,8 @@ import threading
 import time
 import uuid
 from datetime import datetime
+
+log = logging.getLogger("usb-manager")
 
 # ── in-memory job registry ────────────────────────────────────────
 jobs: dict[str, dict] = {}
@@ -68,6 +71,7 @@ def create_job(operation: str, task_ids: list[str]) -> str:
 def _simulate_dd(src: str, dst: str, total_bytes: int,
                  job_id: str, task_id: str, label: str, socketio) -> bool:
     """Fake dd — emits realistic progress events without touching any disk."""
+    log.info("[DEMO] %s → %s", src, dst)
     display_total = _DEMO_SIZE  # always show 32 GB in demo
     speed_mbps    = random.randint(75, 115)
     duration      = display_total / (speed_mbps * 1024 * 1024)
@@ -113,6 +117,7 @@ def _run_dd(src: str, dst: str, total_bytes: int,
     if DEMO_MODE:
         return _simulate_dd(src, dst, total_bytes, job_id, task_id, label, socketio)
 
+    log.info("dd  %s → %s  (%d MB)", src, dst, total_bytes // 1024 // 1024)
     if dst.startswith("/dev/"):
         subprocess.run(["umount", dst], capture_output=True)
 
@@ -171,6 +176,7 @@ def _run_dd(src: str, dst: str, total_bytes: int,
     proc.wait()
     success = proc.returncode == 0
     subprocess.run(["sync"], capture_output=True)
+    log.info("dd  %s → %s  %s", src, dst, "OK" if success else "FAILED")
 
     final_pct    = 100 if success else jobs[job_id]["tasks"][task_id].get("percent", 0)
     final_status = "done" if success else "error"
