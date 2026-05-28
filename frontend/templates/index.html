@@ -30,16 +30,11 @@
       <button class="btn btn-ghost btn-sm" onclick="openDiskBrowser()" title="Browse all disks">⊞ ALL DISKS</button>
     </div>
 
-    <!-- SSHD -->
-    <div class="sshd-block">
+    <!-- Storage block — filled dynamically (local or SSHD) -->
+    <div class="sshd-block" id="storage-block">
       <div class="sshd-row">
-        <span class="sshd-label">SSHD / Storage</span>
-        <span class="sshd-badge unmounted" id="sshd-badge">UNMOUNTED</span>
-      </div>
-      <div class="sshd-actions">
-        <button class="btn btn-green btn-sm" onclick="openModal('sshd-mount')">Mount</button>
-        <button class="btn btn-ghost btn-sm" onclick="doUnmountSshd()">Unmount</button>
-        <button class="btn btn-ghost btn-sm" onclick="refreshDevices()">⟳</button>
+        <span class="sshd-label">Storage</span>
+        <span class="sshd-badge unmounted" id="sshd-badge">CHECKING…</span>
       </div>
     </div>
 

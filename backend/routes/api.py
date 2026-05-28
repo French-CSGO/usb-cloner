@@ -3,6 +3,7 @@ import threading
 
 from flask import Blueprint, jsonify, request
 
+import config as _cfg
 from config import CS2_IMG, HISTORY_FILE, IMG_DIR, JOUEURS_DIR, WIN_IMG
 from services import dd_service, device_service, profile_service
 
@@ -29,15 +30,36 @@ def _bg(fn, *args):
     threading.Thread(target=fn, args=args, daemon=True).start()
 
 
-# ── SSHD mount ────────────────────────────────────────────────────
+# ── storage (SSHD or local) ───────────────────────────────────────
+
+@api.get("/storage/info")
+def storage_info():
+    if _cfg.STORAGE_LOCAL:
+        os.makedirs(_cfg.JOUEURS_DIR, exist_ok=True)
+        return jsonify({
+            "mode":    "local",
+            "ready":   True,
+            "mounted": True,
+            "path":    _cfg.IMG_DIR,
+        })
+    mounted = device_service.is_sshd_mounted()
+    return jsonify({
+        "mode":    "sshd",
+        "ready":   mounted,
+        "mounted": mounted,
+        "path":    _cfg.SSHD_MOUNT,
+    })
+
 
 @api.get("/mount/status")
 def mount_status():
-    return jsonify({"mounted": device_service.is_sshd_mounted()})
+    return storage_info()
 
 
 @api.post("/mount")
 def mount():
+    if _cfg.STORAGE_LOCAL:
+        return _err("Storage is local — no mount needed")
     disk = (request.json or {}).get("disk", "")
     if not disk:
         return _err("disk required")
@@ -50,6 +72,8 @@ def mount():
 
 @api.delete("/mount")
 def unmount():
+    if _cfg.STORAGE_LOCAL:
+        return _err("Storage is local — nothing to unmount")
     ok = device_service.unmount_sshd()
     return jsonify({"success": ok})
 
