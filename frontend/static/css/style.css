@@ -194,6 +194,8 @@ body {
 }
 
 .device-vendor { font-size: 10px; color: var(--txt2); margin-top: 2px; }
+.device-serial { font-size: 9px; color: var(--txt3); margin-top: 1px; letter-spacing: 0.5px; }
+.assign-serial { font-size: 9px; color: var(--txt3); letter-spacing: 0.5px; font-weight: normal; }
 
 .device-player {
   margin-top: 5px;

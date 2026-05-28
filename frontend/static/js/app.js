@@ -157,11 +157,13 @@ function renderDevices() {
     return;
   }
   el.innerHTML = state.devices.map(d => {
-    const player = d.player || state.assignments[d.name];
+    const player = d.player || state.assignments[d.uid] || state.assignments[d.name];
     const playerHtml = player
       ? `<span class="player-badge">${esc(player)}</span>`
       : `<span class="no-player">unassigned</span>`;
-    const model = [d.vendor, d.model].filter(Boolean).join(' ').trim() || d.tran;
+    const model  = [d.vendor, d.model].filter(Boolean).join(' ').trim() || d.tran;
+    const serial = d.serial
+      ? `<div class="device-serial">S/N ${esc(d.serial)}</div>` : '';
     return `
       <div class="device-card" onclick="selectDevice('${esc(d.name)}')">
         <div class="device-name">
@@ -169,6 +171,7 @@ function renderDevices() {
           <span class="size-tag">${esc(d.size)}</span>
         </div>
         <div class="device-vendor">${esc(model)}</div>
+        ${serial}
         <div class="device-player">${playerHtml}</div>
       </div>`;
   }).join('');
@@ -362,11 +365,13 @@ function updateAssignModal() {
     return;
   }
   container.innerHTML = state.devices.map(d => {
-    const current = state.assignments[d.name] || '';
+    const current = state.assignments[d.uid] || state.assignments[d.name] || '';
+    const serialNote = d.serial
+      ? `<span class="assign-serial">${esc(d.serial)}</span>` : '';
     return `
       <div class="form-field">
-        <label>/dev/${esc(d.name)} (${esc(d.size)})</label>
-        <input type="text" class="assign-input" data-disk="${esc(d.name)}"
+        <label>/dev/${esc(d.name)} — ${esc(d.size)} ${serialNote}</label>
+        <input type="text" class="assign-input" data-uid="${esc(d.uid)}"
                value="${esc(current)}" placeholder="player name (blank = skip)">
       </div>`;
   }).join('');
@@ -374,12 +379,16 @@ function updateAssignModal() {
 
 async function doAssign() {
   const inputs = document.querySelectorAll('.assign-input');
-  const newAssoc = { ...state.assignments };
+  // Preserve assignments for keys not currently connected (they keep their uid entry)
+  const currentUids = new Set(state.devices.map(d => d.uid));
+  const newAssoc = {};
+  for (const [k, v] of Object.entries(state.assignments)) {
+    if (!currentUids.has(k)) newAssoc[k] = v;
+  }
   inputs.forEach(inp => {
-    const disk   = inp.dataset.disk;
+    const uid    = inp.dataset.uid;
     const player = inp.value.trim();
-    if (player) newAssoc[disk] = player;
-    else        delete newAssoc[disk];
+    if (player) newAssoc[uid] = player;
   });
   closeModal('assign');
   await api('POST', '/assignments', newAssoc);
@@ -392,9 +401,10 @@ async function doAssign() {
 // ── change player ─────────────────────────────────────────────
 function updateChangeDiskSelect() {
   const sel = document.getElementById('change-disk');
-  sel.innerHTML = state.devices.map(d =>
-    `<option value="${esc(d.name)}">/dev/${esc(d.name)} — ${esc(d.player || state.assignments[d.name] || 'unassigned')}</option>`
-  ).join('');
+  sel.innerHTML = state.devices.map(d => {
+    const player = d.player || state.assignments[d.uid] || state.assignments[d.name] || 'unassigned';
+    return `<option value="${esc(d.name)}">/dev/${esc(d.name)} — ${esc(player)}</option>`;
+  }).join('');
 }
 
 async function doChangePlayer() {

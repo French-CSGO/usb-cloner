@@ -76,7 +76,7 @@ def list_devices():
     assoc = device_service.load_associations()
     disks = device_service.get_usb_disks()
     for d in disks:
-        d["player"] = assoc.get(d["name"])
+        d["player"] = assoc.get(d["uid"]) or assoc.get(d["name"])
     return jsonify(disks)
 
 
@@ -86,7 +86,7 @@ def list_all_disks():
     assoc  = device_service.load_associations()
     disks  = device_service.get_all_disks_full()
     for d in disks:
-        d["player"] = assoc.get(d["name"])
+        d["player"] = assoc.get(d["uid"]) or assoc.get(d["name"])
     return jsonify(disks)
 
 
@@ -311,9 +311,13 @@ def save_players():
     if not assoc:
         return _err("No assignments — use Assign Players first")
 
+    dev_assoc = device_service.resolve_to_devices(assoc)
+    if not dev_assoc:
+        return _err("No connected keys match current assignments")
+
     os.makedirs(JOUEURS_DIR, exist_ok=True)
     tasks = {}
-    for disk, player in assoc.items():
+    for disk, player in dev_assoc.items():
         src = f"/dev/{disk}{p_cs2}"
         dst = os.path.join(JOUEURS_DIR, f"{player}.img")
         tasks[f"{disk}:{player}"] = (src, dst, dd_service.get_size(src),
@@ -323,7 +327,7 @@ def save_players():
 
     def _run():
         dd_service.run_parallel(job_id, tasks, _sio)
-        profile_service.log_history(f"Save: {len(assoc)} players")
+        profile_service.log_history(f"Save: {len(dev_assoc)} players")
 
     _bg(_run)
     return _ok(job_id=job_id)
@@ -338,8 +342,12 @@ def load_players():
     if not assoc:
         return _err("No assignments")
 
+    dev_assoc = device_service.resolve_to_devices(assoc)
+    if not dev_assoc:
+        return _err("No connected keys match current assignments")
+
     tasks = {}
-    for disk, player in assoc.items():
+    for disk, player in dev_assoc.items():
         img = os.path.join(JOUEURS_DIR, f"{player}.img")
         src = img if os.path.exists(img) else CS2_IMG
         dst = f"/dev/{disk}{p_cs2}"
@@ -350,7 +358,7 @@ def load_players():
 
     def _run():
         dd_service.run_parallel(job_id, tasks, _sio)
-        profile_service.log_history(f"Load: {len(assoc)} players")
+        profile_service.log_history(f"Load: {len(dev_assoc)} players")
 
     _bg(_run)
     return _ok(job_id=job_id)
@@ -394,7 +402,10 @@ def change_player():
         return _err("disk and new_player required")
 
     assoc      = device_service.load_associations()
-    old_player = assoc.get(disk)
+    # Resolve device name → uid for stable storage
+    name_to_uid = {v: k for k, v in device_service.uid_to_name_map().items()}
+    uid        = name_to_uid.get(disk, disk)
+    old_player = assoc.get(uid) or assoc.get(disk)
     tasks      = {}
 
     if old_player and save_old:
@@ -414,7 +425,9 @@ def change_player():
     def _run():
         # Sequential: save first, then load
         dd_service.run_parallel(job_id, tasks, _sio, sequential=True)
-        assoc[disk] = new_player
+        # Save by uid (stable across replug); remove any legacy disk-name entry
+        assoc.pop(disk, None)
+        assoc[uid] = new_player
         device_service.save_associations(assoc)
         profile_service.log_history(
             f"Player changed /dev/{disk}: {old_player} → {new_player}")
