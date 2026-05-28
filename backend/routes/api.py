@@ -5,7 +5,7 @@ from flask import Blueprint, jsonify, request
 
 import config as _cfg
 from config import CS2_IMG, HISTORY_FILE, IMG_DIR, JOUEURS_DIR, SSD_DIR, WIN_IMG
-from services import dd_service, device_service, profile_service
+from services import dd_service, device_service, profile_service, team_service
 
 api = Blueprint("api", __name__)
 _sio = None  # injected by app.py
@@ -161,9 +161,14 @@ def copy_profile():
 def sync_pull():
     """Pull profiles SSHD → SSD."""
     d     = request.json or {}
+    team  = d.get("team") or ""
     names = d.get("names") or [p["name"] for p in profile_service.list_profiles_sshd()]
+    if team:
+        team_players = set(team_service.get_team_players(team))
+        names = [n for n in names if n in team_players]
     if not names:
-        return _err("No profiles on SSHD to pull")
+        return _err("No profiles on SSHD to pull" if not team
+                    else f"No SSHD profiles for team '{team}'")
     if not device_service.is_sshd_mounted():
         return _err("SSHD not mounted")
 
@@ -184,9 +189,14 @@ def sync_pull():
 def sync_push():
     """Push profiles SSD → SSHD."""
     d     = request.json or {}
+    team  = d.get("team") or ""
     names = d.get("names") or [p["name"] for p in profile_service.list_profiles_ssd()]
+    if team:
+        team_players = set(team_service.get_team_players(team))
+        names = [n for n in names if n in team_players]
     if not names:
-        return _err("No profiles on SSD to push")
+        return _err("No profiles on SSD to push" if not team
+                    else f"No SSD profiles for team '{team}'")
     if not device_service.is_sshd_mounted():
         return _err("SSHD not mounted")
 
@@ -201,6 +211,53 @@ def sync_push():
 
     _bg(_run)
     return _ok(job_id=job_id)
+
+
+# ── teams ─────────────────────────────────────────────────────────
+
+@api.get("/teams")
+def list_teams():
+    teams = team_service.load_teams()
+    return jsonify([{"name": n, "players": p} for n, p in teams.items()])
+
+
+@api.post("/teams")
+def create_team():
+    d = request.json or {}
+    name = d.get("name", "").strip()
+    if not name:
+        return _err("name required")
+    teams = team_service.load_teams()
+    if name in teams:
+        return _err(f"Team '{name}' already exists")
+    teams[name] = [p.strip() for p in d.get("players", []) if p.strip()]
+    team_service.save_teams(teams)
+    return _ok()
+
+
+@api.put("/teams/<name>")
+def update_team(name):
+    d = request.json or {}
+    teams = team_service.load_teams()
+    if name not in teams:
+        return _err("Team not found", 404)
+    new_name = d.get("name", name).strip() or name
+    players  = [p.strip() for p in d.get("players", []) if p.strip()]
+    if new_name != name:
+        del teams[name]
+    teams[new_name] = players
+    team_service.save_teams(teams)
+    return _ok()
+
+
+@api.delete("/teams/<name>")
+def delete_team(name):
+    teams = team_service.load_teams()
+    if name not in teams:
+        return _err("Team not found", 404)
+    del teams[name]
+    team_service.save_teams(teams)
+    return _ok()
 
 
 # ── assignments ───────────────────────────────────────────────────
@@ -286,6 +343,7 @@ def deploy():
     d = request.json or {}
     p_win = d.get("partition_win", "1")
     p_cs2 = d.get("partition_cs2", "2")
+    team  = d.get("team") or ""
 
     if not os.path.exists(WIN_IMG) or not os.path.exists(CS2_IMG):
         return _err("Master images not found — run Create Master first")
@@ -293,6 +351,15 @@ def deploy():
     disks = device_service.get_usb_disks()
     if not disks:
         return _err("No USB keys detected")
+
+    if team:
+        team_players  = set(team_service.get_team_players(team))
+        assoc         = device_service.load_associations()
+        dev_assoc     = device_service.resolve_to_devices(assoc)
+        team_disks    = {disk for disk, player in dev_assoc.items() if player in team_players}
+        disks = [d for d in disks if d["name"] in team_disks]
+        if not disks:
+            return _err(f"No keys assigned to team '{team}'")
 
     win_sz  = dd_service.get_size(WIN_IMG)
     cs2_sz  = dd_service.get_size(CS2_IMG)
@@ -318,6 +385,7 @@ def deploy():
 def save_players():
     d     = request.json or {}
     p_cs2 = d.get("partition_cs2", "2")
+    team  = d.get("team") or ""
     assoc = device_service.load_associations()
 
     if not assoc:
@@ -326,6 +394,13 @@ def save_players():
     dev_assoc = device_service.resolve_to_devices(assoc)
     if not dev_assoc:
         return _err("No connected keys match current assignments")
+
+    if team:
+        team_players = set(team_service.get_team_players(team))
+        dev_assoc = {disk: player for disk, player in dev_assoc.items()
+                     if player in team_players}
+        if not dev_assoc:
+            return _err(f"No keys assigned to team '{team}'")
 
     os.makedirs(JOUEURS_DIR, exist_ok=True)
     tasks = {}
@@ -349,6 +424,7 @@ def save_players():
 def load_players():
     d     = request.json or {}
     p_cs2 = d.get("partition_cs2", "2")
+    team  = d.get("team") or ""
     assoc = device_service.load_associations()
 
     if not assoc:
@@ -357,6 +433,13 @@ def load_players():
     dev_assoc = device_service.resolve_to_devices(assoc)
     if not dev_assoc:
         return _err("No connected keys match current assignments")
+
+    if team:
+        team_players = set(team_service.get_team_players(team))
+        dev_assoc = {disk: player for disk, player in dev_assoc.items()
+                     if player in team_players}
+        if not dev_assoc:
+            return _err(f"No keys assigned to team '{team}'")
 
     tasks = {}
     for disk, player in dev_assoc.items():

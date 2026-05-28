@@ -21,6 +21,7 @@ services:
       # Always local — never change these
       LOG_FILE:   /data/usb_manager.log
       ASSOC_FILE: /data/usb_associations.conf
+      TEAMS_FILE: /data/teams.conf
 
       # ── Dual storage ─────────────────────────────────────────────
       # SSD  = fast local storage (master images + active profiles)
@@ -53,3 +54,4 @@ services:
       HISTORY_FILE:     /data/historique_tournoi.log
       LOG_FILE:         /data/usb_manager.log
       ASSOC_FILE:       /data/usb_associations.conf
+      TEAMS_FILE:       /data/teams.conf

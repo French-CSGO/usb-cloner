@@ -21,6 +21,7 @@ HISTORY_FILE    = os.environ.get("HISTORY_FILE",     "/data/historique_tournoi.l
 # ── Misc ─────────────────────────────────────────────────────────
 LOG_FILE        = os.environ.get("LOG_FILE",         "/data/usb_manager.log")
 ASSOC_FILE      = os.environ.get("ASSOC_FILE",       "/data/usb_associations.conf")
+TEAMS_FILE      = os.environ.get("TEAMS_FILE",       "/data/teams.conf")
 
 # Backward-compat aliases
 IMG_DIR         = SSD_DIR
