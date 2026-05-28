@@ -38,6 +38,17 @@
       </div>
     </div>
 
+    <!-- Team selector -->
+    <div class="team-selector-block">
+      <div class="team-selector-row">
+        <span class="team-selector-label">⬡ Équipe</span>
+        <select id="team-select" class="team-select" onchange="onTeamChange()">
+          <option value="">— Toutes —</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="openModal('teams')" title="Gérer les équipes">⊞</button>
+      </div>
+    </div>
+
     <!-- Device list -->
     <div class="device-list" id="device-list">
       <div class="no-devices">No USB keys detected<br>
@@ -85,7 +96,10 @@
 
     <!-- Tournament -->
     <div class="section">
-      <div class="section-title">── Tournament</div>
+      <div class="section-title" style="display:flex;align-items:center;gap:8px">
+        <span>── Tournament</span>
+        <span id="team-context-badge" class="hidden"></span>
+      </div>
       <div class="op-grid">
         <button class="op-btn" onclick="openModal('assign')">
           <span class="icon">🔧</span>
@@ -361,6 +375,30 @@
         <button class="btn btn-ghost" onclick="closeModal('disk-browser')">Close</button>
         <button class="btn btn-green" onclick="saveUsbSelection()">Apply USB Selection</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Teams management -->
+<div class="modal-overlay hidden" id="modal-teams">
+  <div class="modal-box" style="min-width:480px;max-width:600px">
+    <div class="modal-header">
+      <span class="modal-title">⬡ Gestion des équipes</span>
+      <button class="modal-close" onclick="closeModal('teams')">✕</button>
+    </div>
+    <div class="modal-body" style="padding:0;max-height:520px;overflow-y:auto">
+      <!-- New team form -->
+      <div class="new-team-form">
+        <input type="text" id="new-team-name" placeholder="Nom de l'équipe" style="flex:1">
+        <button class="btn btn-green btn-sm" onclick="doCreateTeam()">+ Créer</button>
+      </div>
+      <!-- Team list -->
+      <div id="teams-list">
+        <div style="color:var(--txt3);text-align:center;padding:24px">Aucune équipe</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('teams')">Fermer</button>
     </div>
   </div>
 </div>

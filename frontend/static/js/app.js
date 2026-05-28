@@ -7,11 +7,16 @@
 
 // ── state ─────────────────────────────────────────────────────
 const state = {
-  devices:     [],
-  assignments: {},
-  profiles:    [],
-  tasks:       {},   // task_id → latest progress data
-  sshdMounted: false,
+  devices:          [],
+  assignments:      {},
+  profiles:         [],
+  profilesCombined: [],
+  tasks:            {},
+  sshdMounted:      false,
+  ssdPath:          '',
+  sshdPath:         '',
+  teams:            [],
+  activeTeam:       '',
 };
 
 // ── Socket.io ─────────────────────────────────────────────────
@@ -84,6 +89,7 @@ async function pollAll() {
     refreshMount(),
     refreshDevices(),
     refreshProfiles(),
+    refreshTeams(),
   ]);
 }
 
@@ -144,6 +150,49 @@ async function refreshProfiles() {
   state.profilesCombined = combined;
   renderProfiles();
   renderSyncTable();
+}
+
+async function refreshTeams() {
+  state.teams = await api('GET', '/teams').catch(() => []);
+  renderTeamSelector();
+  if (document.getElementById('modal-teams') &&
+      !document.getElementById('modal-teams').classList.contains('hidden')) {
+    renderTeamsList();
+  }
+}
+
+function renderTeamSelector() {
+  const sel = document.getElementById('team-select');
+  if (!sel) return;
+  const cur = state.activeTeam;
+  sel.innerHTML = `<option value="">— Toutes —</option>` +
+    state.teams.map(t =>
+      `<option value="${esc(t.name)}" ${t.name === cur ? 'selected' : ''}>${esc(t.name)} (${t.players.length})</option>`
+    ).join('');
+  updateTeamContext();
+}
+
+function onTeamChange() {
+  state.activeTeam = document.getElementById('team-select').value;
+  updateTeamContext();
+}
+
+function updateTeamContext() {
+  const badge = document.getElementById('team-context-badge');
+  if (!badge) return;
+  if (state.activeTeam) {
+    badge.innerHTML = `<span class="active-team-tag">${esc(state.activeTeam)}<button onclick="clearTeam()" title="Effacer filtre">✕</button></span>`;
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+function clearTeam() {
+  state.activeTeam = '';
+  const sel = document.getElementById('team-select');
+  if (sel) sel.value = '';
+  updateTeamContext();
 }
 
 // Auto-refresh every 10 s
@@ -252,8 +301,9 @@ function switchTab(name) {
 
 // ── modal helpers ─────────────────────────────────────────────
 function openModal(name) {
-  if (name === 'assign') updateAssignModal();
+  if (name === 'assign')       updateAssignModal();
   if (name === 'change-player') updateChangeDiskSelect();
+  if (name === 'teams')         renderTeamsList();
   document.getElementById(`modal-${name}`).classList.remove('hidden');
 }
 
@@ -313,41 +363,59 @@ async function doCreateMaster() {
 
 // ── deploy ────────────────────────────────────────────────────
 function confirmDeploy() {
+  const t = state.activeTeam;
   showConfirm(
-    'Deploy All Keys',
-    `Flash Windows + CS2 blank to ${state.devices.length} USB key(s)? All data will be overwritten.`,
+    'Deploy Keys',
+    t ? `Flash Windows + CS2 blank aux clés de "${t}"?`
+      : `Flash Windows + CS2 blank sur ${state.devices.length} clé(s)? Les données seront effacées.`,
     doDeploy
   );
 }
 
 async function doDeploy() {
-  log('Deploying Windows + CS2 to all keys…', 'info');
+  const t = state.activeTeam;
+  log(`Deploy${t ? ' [' + t + ']' : ' all'}…`, 'info');
   const r = await api('POST', '/operations/deploy', {
     partition_win: pWin(), partition_cs2: pCs2(),
+    team: t || null,
   }).catch(() => null);
-  if (r?.job_id) toast(`Deploy job ${r.job_id} started`, 'info');
+  if (r?.job_id) toast(`Deploy démarré`, 'info');
 }
 
 // ── save ──────────────────────────────────────────────────────
 function confirmSave() {
-  showConfirm('Save Players', 'Save current player CS2 configs to SSHD?', doSave);
+  const t = state.activeTeam;
+  showConfirm('Save Players',
+    t ? `Sauvegarder les configs CS2 de "${t}"?`
+      : 'Sauvegarder les configs CS2 de tous les joueurs?',
+    doSave);
 }
 
 async function doSave() {
-  log('Saving player configs…', 'info');
-  const r = await api('POST', '/operations/save', { partition_cs2: pCs2() }).catch(() => null);
-  if (r?.job_id) toast(`Save job ${r.job_id} started`, 'info');
+  const t = state.activeTeam;
+  log(`Save${t ? ' [' + t + ']' : ' all'}…`, 'info');
+  const r = await api('POST', '/operations/save', {
+    partition_cs2: pCs2(), team: t || null,
+  }).catch(() => null);
+  if (r?.job_id) toast(`Save démarré`, 'info');
 }
 
 // ── load ──────────────────────────────────────────────────────
 function confirmLoad() {
-  showConfirm('Load Players', 'Restore player configs from SSHD to their assigned keys?', doLoad);
+  const t = state.activeTeam;
+  showConfirm('Load Players',
+    t ? `Restaurer les configs de "${t}" sur leurs clés?`
+      : 'Restaurer les configs de tous les joueurs?',
+    doLoad);
 }
 
 async function doLoad() {
-  log('Loading player configs…', 'info');
-  const r = await api('POST', '/operations/load', { partition_cs2: pCs2() }).catch(() => null);
-  if (r?.job_id) toast(`Load job ${r.job_id} started`, 'info');
+  const t = state.activeTeam;
+  log(`Load${t ? ' [' + t + ']' : ' all'}…`, 'info');
+  const r = await api('POST', '/operations/load', {
+    partition_cs2: pCs2(), team: t || null,
+  }).catch(() => null);
+  if (r?.job_id) toast(`Load démarré`, 'info');
 }
 
 // ── reset ─────────────────────────────────────────────────────
@@ -497,9 +565,12 @@ function renderSyncTable() {
 
 async function syncAll(direction) {
   if (!state.sshdMounted) { toast('SSHD not mounted', 'err'); return; }
-  log(`Sync ${direction === 'pull' ? 'SSHD→SSD' : 'SSD→SSHD'} (all)…`, 'info');
-  const r = await api('POST', `/sync/${direction}`).catch(() => null);
-  if (r?.job_id) toast(`Sync job ${r.job_id} started`, 'info');
+  const t     = state.activeTeam;
+  const label = direction === 'pull' ? 'SSHD→SSD' : 'SSD→SSHD';
+  log(`Sync ${label}${t ? ' [' + t + ']' : ' (all)'}…`, 'info');
+  const body = t ? { team: t } : {};
+  const r = await api('POST', `/sync/${direction}`, body).catch(() => null);
+  if (r?.job_id) toast(`Sync démarré`, 'info');
 }
 
 async function syncOne(direction, name) {
@@ -507,6 +578,87 @@ async function syncOne(direction, name) {
   log(`Sync ${direction} ${name}…`, 'info');
   const r = await api('POST', `/sync/${direction}`, { names: [name] }).catch(() => null);
   if (r?.job_id) toast(`Sync ${name} started`, 'info');
+}
+
+// ── teams ─────────────────────────────────────────────────────
+
+function renderTeamsList() {
+  const el = document.getElementById('teams-list');
+  if (!el) return;
+  if (!state.teams.length) {
+    el.innerHTML = '<div style="color:var(--txt3);text-align:center;padding:24px">Aucune équipe — créez-en une ci-dessus</div>';
+    return;
+  }
+  el.innerHTML = state.teams.map(t => `
+    <div class="team-card" id="team-card-${esc(t.name)}">
+      <div class="team-card-header">
+        <span class="team-card-name">${esc(t.name)}</span>
+        <span class="team-card-count">${t.players.length} joueur${t.players.length !== 1 ? 's' : ''}</span>
+        <div class="team-card-actions">
+          <button class="btn btn-ghost btn-sm" onclick="editTeam('${esc(t.name)}')">Éditer</button>
+          <button class="icon-btn del" title="Supprimer" onclick="doDeleteTeam('${esc(t.name)}')">✕</button>
+        </div>
+      </div>
+      <div class="team-players" id="team-players-${esc(t.name)}">
+        ${t.players.length
+          ? t.players.map(p => `<span class="player-chip">${esc(p)}</span>`).join('')
+          : '<span style="color:var(--txt3);font-size:10px">Aucun joueur</span>'}
+      </div>
+      <div class="team-edit-form hidden" id="team-edit-${esc(t.name)}">
+        <input type="text" class="team-name-input" value="${esc(t.name)}" placeholder="Nom de l'équipe">
+        <textarea class="team-players-input" rows="5" placeholder="Un joueur par ligne">${esc(t.players.join('\n'))}</textarea>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" onclick="cancelEditTeam('${esc(t.name)}')">Annuler</button>
+          <button class="btn btn-green btn-sm" onclick="doUpdateTeam('${esc(t.name)}')">Sauvegarder</button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function editTeam(name) {
+  document.getElementById(`team-players-${name}`)?.classList.add('hidden');
+  document.getElementById(`team-edit-${name}`)?.classList.remove('hidden');
+}
+
+function cancelEditTeam(name) {
+  document.getElementById(`team-edit-${name}`)?.classList.add('hidden');
+  document.getElementById(`team-players-${name}`)?.classList.remove('hidden');
+}
+
+async function doCreateTeam() {
+  const nameEl = document.getElementById('new-team-name');
+  const name   = nameEl.value.trim();
+  if (!name) return;
+  await api('POST', '/teams', { name, players: [] });
+  nameEl.value = '';
+  toast(`Équipe "${name}" créée`, 'ok');
+  log(`Équipe créée: ${name}`, 'ok');
+  await refreshTeams();
+  renderTeamsList();
+}
+
+async function doUpdateTeam(oldName) {
+  const card    = document.getElementById(`team-card-${oldName}`);
+  const newName = card.querySelector('.team-name-input').value.trim() || oldName;
+  const raw     = card.querySelector('.team-players-input').value;
+  const players = raw.split(/[\n,]+/).map(p => p.trim()).filter(Boolean);
+  await api('PUT', `/teams/${encodeURIComponent(oldName)}`, { name: newName, players });
+  toast(`Équipe "${newName}" sauvegardée`, 'ok');
+  log(`Équipe mise à jour: ${newName} (${players.length} joueurs)`, 'ok');
+  if (state.activeTeam === oldName) state.activeTeam = newName;
+  await refreshTeams();
+  renderTeamsList();
+}
+
+async function doDeleteTeam(name) {
+  showConfirm('Supprimer l\'équipe', `Supprimer l'équipe "${name}"?`, async () => {
+    await api('DELETE', `/teams/${encodeURIComponent(name)}`);
+    if (state.activeTeam === name) clearTeam();
+    toast(`Équipe "${name}" supprimée`, 'ok');
+    log(`Équipe supprimée: ${name}`, 'ok');
+    await refreshTeams();
+    renderTeamsList();
+  });
 }
 
 // ── disk browser ─────────────────────────────────────────────
