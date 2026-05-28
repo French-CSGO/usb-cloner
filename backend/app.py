@@ -40,6 +40,13 @@ def on_connect():
 if __name__ == "__main__":
     import config
     os.makedirs("/data", exist_ok=True)
-    if config.STORAGE_LOCAL:
+    if config.STORAGE_LOCAL or config.DEMO_MODE:
         os.makedirs(config.JOUEURS_DIR, exist_ok=True)
+    if config.DEMO_MODE:
+        # Create tiny placeholder images so file-existence checks pass
+        for img in [config.WIN_IMG, config.CS2_IMG]:
+            if not os.path.exists(img):
+                with open(img, "wb") as f:
+                    f.write(b"\x00" * 1024)  # 1 KB stub
+        print("[DEMO MODE] Fake USB devices active — no real disks will be touched.")
     socketio.run(app, host="0.0.0.0", port=5000, debug=False)

@@ -11,9 +11,11 @@ Job-complete event shape:
 """
 
 import os
+import random
 import re
 import subprocess
 import threading
+import time
 import uuid
 from datetime import datetime
 
@@ -25,11 +27,16 @@ _PROGRESS_RE = re.compile(
     r"(\d+)\s+bytes[^,]*,\s*([\d.]+)\s+s,\s*([\d.]+\s+[KMGT]?B/s)"
 )
 
+_DEMO_SIZE = 32 * 1024 * 1024 * 1024  # 32 GB — displayed size in demo
+
 
 # ── helpers ───────────────────────────────────────────────────────
 
 def get_size(path: str) -> int:
     """Size in bytes — works for regular files and block devices."""
+    from config import DEMO_MODE
+    if DEMO_MODE and path.startswith("/dev/"):
+        return _DEMO_SIZE
     if os.path.isfile(path):
         return os.path.getsize(path)
     r = subprocess.run(["blockdev", "--getsize64", path],
@@ -56,14 +63,56 @@ def create_job(operation: str, task_ids: list[str]) -> str:
     return job_id
 
 
+# ── demo simulator ────────────────────────────────────────────────
+
+def _simulate_dd(src: str, dst: str, total_bytes: int,
+                 job_id: str, task_id: str, label: str, socketio) -> bool:
+    """Fake dd — emits realistic progress events without touching any disk."""
+    display_total = _DEMO_SIZE  # always show 32 GB in demo
+    speed_mbps    = random.randint(75, 115)
+    duration      = display_total / (speed_mbps * 1024 * 1024)
+    steps         = 40
+
+    with _lock:
+        jobs[job_id]["tasks"][task_id].update({
+            "status": "running", "label": label, "total_bytes": display_total,
+        })
+
+    for i in range(1, steps + 1):
+        frac      = i / steps
+        bytes_done = int(display_total * frac)
+        elapsed    = round(duration * frac, 1)
+        speed_now  = f"{speed_mbps + random.randint(-8, 8)} MB/s"
+        eta        = int(duration * (1 - frac)) if i < steps else 0
+        pct        = min(99, int(frac * 100)) if i < steps else 100
+        status     = "done" if i == steps else "running"
+
+        data = {
+            "job_id": job_id, "task_id": task_id, "label": label,
+            "bytes_done": bytes_done, "total_bytes": display_total,
+            "percent": pct, "speed": speed_now,
+            "elapsed": elapsed, "eta": eta, "status": status,
+        }
+        with _lock:
+            jobs[job_id]["tasks"][task_id].update(data)
+        socketio.emit("progress", data)
+        time.sleep(duration / steps)
+
+    return True
+
+
 # ── single dd task ────────────────────────────────────────────────
 
 def _run_dd(src: str, dst: str, total_bytes: int,
             job_id: str, task_id: str, label: str, socketio) -> bool:
     """
     Run one dd, stream stderr, emit 'progress' events, return success bool.
-    dst is unmounted before writing when it is a block device.
+    In DEMO_MODE, simulates progress without touching any disk.
     """
+    from config import DEMO_MODE
+    if DEMO_MODE:
+        return _simulate_dd(src, dst, total_bytes, job_id, task_id, label, socketio)
+
     if dst.startswith("/dev/"):
         subprocess.run(["umount", dst], capture_output=True)
 
@@ -123,7 +172,7 @@ def _run_dd(src: str, dst: str, total_bytes: int,
     success = proc.returncode == 0
     subprocess.run(["sync"], capture_output=True)
 
-    final_pct = 100 if success else jobs[job_id]["tasks"][task_id].get("percent", 0)
+    final_pct    = 100 if success else jobs[job_id]["tasks"][task_id].get("percent", 0)
     final_status = "done" if success else "error"
     with _lock:
         jobs[job_id]["tasks"][task_id].update({
