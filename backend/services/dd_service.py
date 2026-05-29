@@ -45,7 +45,7 @@ def cancel_task(job_id: str, task_id: str) -> bool:
     return True
 
 _PROGRESS_RE = re.compile(
-    r"(\d+)\s+bytes[^,]*,\s*([\d.]+)\s+s,\s*([\d.]+\s+[KMGT]?B/s)"
+    r"(\d+)\s+bytes(?:\s+\([^)]*\))?\s+copied,\s*([\d.]+)\s+s,\s*([\d.]+\s+[kKMGT]?B/s)"
 )
 
 _DEMO_SIZE = 32 * 1024 * 1024 * 1024  # 32 GB — displayed size in demo
