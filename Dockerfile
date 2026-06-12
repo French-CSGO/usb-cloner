@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       coreutils \
       mount \
       udev \
+      ntfs-3g \
+      rsync \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt ./
@@ -21,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
 
-RUN mkdir -p /data /mnt/sshd
+RUN mkdir -p /data /mnt/sshd /usb_work
 
 EXPOSE 5000
 

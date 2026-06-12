@@ -4,8 +4,8 @@ import threading
 from flask import Blueprint, jsonify, request
 
 import config as _cfg
-from config import CS2_IMG, HISTORY_FILE, IMG_DIR, JOUEURS_DIR, SSD_DIR, WIN_IMG
-from services import dd_service, device_service, profile_service, team_service
+from config import CS2_IMG, HISTORY_FILE, IMG_DIR, SSD_DIR, WIN_IMG
+from services import dd_service, device_service, profile_service, rsync_service, team_service
 
 api = Blueprint("api", __name__)
 _sio = None  # injected by app.py
@@ -135,7 +135,7 @@ def list_profiles_combined():
 
 @api.delete("/profiles/<name>")
 def delete_profile(name):
-    storage = request.args.get("storage", "ssd")
+    storage = request.args.get("storage", "sshd")
     ok = profile_service.delete_profile(name, storage)
     return _ok() if ok else _err(f"Profile '{name}' not found", 404)
 
@@ -381,6 +381,29 @@ def deploy():
     return _ok(job_id=job_id)
 
 
+def _save_worker(tid, disk, player, p_cs2, job_id):
+    """Mount CS2 partition read-only, rsync it into the player's SSHD profile."""
+    if tid in dd_service._cancelled:
+        dd_service._cancelled.discard(tid)
+        return False
+
+    label = f"{disk} → {player}"
+    ok, mnt = device_service.mount_partition(disk, p_cs2, rw=False)
+    if not ok:
+        with dd_service._lock:
+            dd_service.jobs[job_id]["tasks"][tid].update({"status": "error", "label": label})
+        _sio.emit("progress", {"job_id": job_id, "task_id": tid, "label": label,
+                                "percent": 0, "status": "error"})
+        return False
+
+    try:
+        return rsync_service.run_rsync(
+            mnt, profile_service.profile_dir(player),
+            job_id, tid, label, _sio, delete=True)
+    finally:
+        device_service.unmount_partition(mnt)
+
+
 @api.post("/operations/save")
 def save_players():
     d     = request.json or {}
@@ -402,22 +425,54 @@ def save_players():
         if not dev_assoc:
             return _err(f"No keys assigned to team '{team}'")
 
-    os.makedirs(JOUEURS_DIR, exist_ok=True)
-    tasks = {}
-    for disk, player in dev_assoc.items():
-        src = f"/dev/{disk}{p_cs2}"
-        dst = os.path.join(JOUEURS_DIR, f"{player}.img")
-        tasks[f"{disk}:{player}"] = (src, dst, dd_service.get_size(src),
-                                      f"{disk} → {player}.img")
+    if not device_service.is_sshd_mounted():
+        return _err("SSHD not mounted — player profiles are stored on the SSHD")
 
+    os.makedirs(_cfg.PROFILES_DIR, exist_ok=True)
+    tasks = {f"{disk}:{player}": (disk, player, p_cs2)
+             for disk, player in dev_assoc.items()}
     job_id = dd_service.create_job("save", list(tasks))
 
     def _run():
-        dd_service.run_parallel(job_id, tasks, _sio)
+        rsync_service.run_parallel(
+            job_id, tasks, _sio,
+            lambda tid, disk, player, p_cs2: _save_worker(tid, disk, player, p_cs2, job_id))
         profile_service.log_history(f"Save: {len(dev_assoc)} players")
 
     _bg(_run)
     return _ok(job_id=job_id)
+
+
+def _load_worker(tid, disk, player, p_cs2, job_id):
+    """Mount CS2 partition, rsync the player's SSHD profile onto it (mirror)."""
+    if tid in dd_service._cancelled:
+        dd_service._cancelled.discard(tid)
+        return False
+
+    label = f"{player} → {disk}"
+    ok, mnt = device_service.mount_partition(disk, p_cs2, rw=True)
+    if not ok:
+        with dd_service._lock:
+            dd_service.jobs[job_id]["tasks"][tid].update({"status": "error", "label": label})
+        _sio.emit("progress", {"job_id": job_id, "task_id": tid, "label": label,
+                                "percent": 0, "status": "error"})
+        return False
+
+    try:
+        if profile_service.profile_exists(player):
+            return rsync_service.run_rsync(
+                profile_service.profile_dir(player), mnt,
+                job_id, tid, label, _sio, delete=True)
+        label = f"{label} (no profile, kept as-is)"
+        with dd_service._lock:
+            dd_service.jobs[job_id]["tasks"][tid].update({
+                "status": "done", "percent": 100, "label": label,
+            })
+        _sio.emit("progress", {"job_id": job_id, "task_id": tid, "label": label,
+                                "percent": 100, "status": "done"})
+        return True
+    finally:
+        device_service.unmount_partition(mnt)
 
 
 @api.post("/operations/load")
@@ -441,18 +496,17 @@ def load_players():
         if not dev_assoc:
             return _err(f"No keys assigned to team '{team}'")
 
-    tasks = {}
-    for disk, player in dev_assoc.items():
-        img = os.path.join(JOUEURS_DIR, f"{player}.img")
-        src = img if os.path.exists(img) else CS2_IMG
-        dst = f"/dev/{disk}{p_cs2}"
-        lbl = f"{player}.img → {disk}" if os.path.exists(img) else f"blank → {disk} ({player})"
-        tasks[f"{disk}:{player}"] = (src, dst, dd_service.get_size(src), lbl)
+    if not device_service.is_sshd_mounted():
+        return _err("SSHD not mounted — player profiles are stored on the SSHD")
 
+    tasks = {f"{disk}:{player}": (disk, player, p_cs2)
+             for disk, player in dev_assoc.items()}
     job_id = dd_service.create_job("load", list(tasks))
 
     def _run():
-        dd_service.run_parallel(job_id, tasks, _sio)
+        rsync_service.run_parallel(
+            job_id, tasks, _sio,
+            lambda tid, disk, player, p_cs2: _load_worker(tid, disk, player, p_cs2, job_id))
         profile_service.log_history(f"Load: {len(dev_assoc)} players")
 
     _bg(_run)
@@ -496,6 +550,9 @@ def change_player():
     if not disk or not new_player:
         return _err("disk and new_player required")
 
+    if not device_service.is_sshd_mounted():
+        return _err("SSHD not mounted — player profiles are stored on the SSHD")
+
     assoc      = device_service.load_associations()
     # Resolve device name → uid for stable storage
     name_to_uid = {v: k for k, v in device_service.uid_to_name_map().items()}
@@ -504,22 +561,63 @@ def change_player():
     tasks      = {}
 
     if old_player and save_old:
-        src = f"/dev/{disk}{p_cs2}"
-        dst = os.path.join(JOUEURS_DIR, f"{old_player}.img")
-        tasks[f"save:{old_player}"] = (src, dst, dd_service.get_size(src),
-                                        f"Save {old_player}")
+        tasks[f"save:{old_player}"] = f"Save {old_player}"
 
-    img = os.path.join(JOUEURS_DIR, f"{new_player}.img")
-    src = img if os.path.exists(img) else CS2_IMG
-    dst = f"/dev/{disk}{p_cs2}"
-    tasks[f"load:{new_player}"] = (src, dst, dd_service.get_size(src),
-                                    f"Load {new_player}")
+    tasks[f"load:{new_player}"] = f"Load {new_player}"
 
     job_id = dd_service.create_job("change_player", list(tasks))
 
     def _run():
-        # Sequential: save first, then load
-        dd_service.run_parallel(job_id, tasks, _sio, sequential=True)
+        ok, mnt = device_service.mount_partition(disk, p_cs2, rw=True)
+        if not ok:
+            with dd_service._lock:
+                for tid, label in tasks.items():
+                    dd_service.jobs[job_id]["tasks"][tid].update({"status": "error", "label": label})
+                    _sio.emit("progress", {"job_id": job_id, "task_id": tid, "label": label,
+                                            "percent": 0, "status": "error"})
+                dd_service.jobs[job_id]["status"] = "done"
+                dd_service.jobs[job_id]["result"] = {"ok": 0, "errors": len(tasks)}
+            _sio.emit("job_complete", {"job_id": job_id, "ok": 0, "errors": len(tasks)})
+            return
+
+        try:
+            if old_player and save_old:
+                tid = f"save:{old_player}"
+                if tid not in dd_service._cancelled:
+                    rsync_service.run_rsync(
+                        mnt, profile_service.profile_dir(old_player),
+                        job_id, tid, tasks[tid], _sio, delete=True)
+                else:
+                    dd_service._cancelled.discard(tid)
+
+            tid   = f"load:{new_player}"
+            label = tasks[tid]
+            if tid in dd_service._cancelled:
+                dd_service._cancelled.discard(tid)
+            elif profile_service.profile_exists(new_player):
+                rsync_service.run_rsync(
+                    profile_service.profile_dir(new_player), mnt,
+                    job_id, tid, label, _sio, delete=True)
+            else:
+                label = f"{label} (no profile, kept as-is)"
+                with dd_service._lock:
+                    dd_service.jobs[job_id]["tasks"][tid].update({
+                        "status": "done", "percent": 100, "label": label,
+                    })
+                _sio.emit("progress", {"job_id": job_id, "task_id": tid, "label": label,
+                                        "percent": 100, "status": "done"})
+        finally:
+            device_service.unmount_partition(mnt)
+
+        results   = {tid: dd_service.jobs[job_id]["tasks"][tid].get("status") == "done"
+                      for tid in tasks}
+        ok_count  = sum(1 for v in results.values() if v)
+        err_count = len(results) - ok_count
+        with dd_service._lock:
+            dd_service.jobs[job_id]["status"] = "done"
+            dd_service.jobs[job_id]["result"] = {"ok": ok_count, "errors": err_count}
+        _sio.emit("job_complete", {"job_id": job_id, "ok": ok_count, "errors": err_count})
+
         # Save by uid (stable across replug); remove any legacy disk-name entry
         assoc.pop(disk, None)
         assoc[uid] = new_player

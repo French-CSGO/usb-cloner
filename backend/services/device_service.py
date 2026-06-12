@@ -219,6 +219,9 @@ def get_size(path: str) -> int:
 
 
 def is_sshd_mounted() -> bool:
+    from config import DEMO_MODE
+    if DEMO_MODE:
+        return True
     return _run(["mountpoint", "-q", SSHD_MOUNT]).returncode == 0
 
 
@@ -259,3 +262,36 @@ def save_associations(assoc: dict):
     with open(ASSOC_FILE, "w") as f:
         for uid, player in assoc.items():
             f.write(f"{uid}={player}\n")
+
+
+# ── partition mount (for rsync profile sync) ─────────────────────
+
+_WORK_MOUNT_BASE = "/usb_work"
+
+
+def mount_partition(disk: str, part: str, rw: bool = True) -> tuple:
+    """
+    Mount /dev/{disk}{part} (NTFS) so its content can be rsync'd.
+    Returns (ok, mountpoint).
+    In DEMO_MODE returns a fake local directory, no real mount.
+    """
+    from config import DEMO_MODE
+    name = f"{disk}{part}"
+    mnt  = os.path.join(_WORK_MOUNT_BASE, name)
+    os.makedirs(mnt, exist_ok=True)
+    if DEMO_MODE:
+        return True, mnt
+    opts = "rw,remove_hiberfile" if rw else "ro"
+    r = _run(["mount", "-t", "ntfs-3g", "-o", opts, f"/dev/{name}", mnt])
+    if r.returncode != 0:
+        log.error("mount /dev/%s failed: %s", name, r.stderr.strip())
+        return False, mnt
+    return True, mnt
+
+
+def unmount_partition(mnt: str):
+    from config import DEMO_MODE
+    if DEMO_MODE:
+        return
+    _run(["sync"])
+    _run(["umount", mnt])
