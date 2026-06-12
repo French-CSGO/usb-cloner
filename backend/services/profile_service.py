@@ -4,18 +4,40 @@ import shutil
 import time
 from datetime import datetime
 
-from config import HISTORY_FILE, SSD_JOUEURS_DIR, SSHD_JOUEURS_DIR
+from config import HISTORY_FILE, PROFILES_DIR, SSD_JOUEURS_DIR, SSHD_JOUEURS_DIR
 
 log = logging.getLogger("usb-manager")
 
 
 # ── internal helpers ──────────────────────────────────────────────
 
-def _info(path: str) -> dict:
+def _dir_size(path: str) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for fname in files:
+            try:
+                total += os.path.getsize(os.path.join(root, fname))
+            except OSError:
+                pass
+    return total
+
+
+def _info_img(path: str) -> dict:
     st = os.stat(path)
     return {
         "name":     os.path.basename(path)[:-4],
+        "type":     "img",
         "size":     st.st_size,
+        "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
+    }
+
+
+def _info_dir(path: str) -> dict:
+    st = os.stat(path)
+    return {
+        "name":     os.path.basename(path),
+        "type":     "dir",
+        "size":     _dir_size(path),
         "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
     }
 
@@ -25,11 +47,14 @@ def _list_dir(directory: str) -> list:
         return []
     result = []
     for fname in sorted(os.listdir(directory)):
-        if fname.endswith(".img"):
-            try:
-                result.append(_info(os.path.join(directory, fname)))
-            except OSError:
-                pass
+        full = os.path.join(directory, fname)
+        try:
+            if fname.endswith(".img") and os.path.isfile(full):
+                result.append(_info_img(full))
+            elif os.path.isdir(full) and not fname.startswith("."):
+                result.append(_info_dir(full))
+        except OSError:
+            pass
     return result
 
 
@@ -58,14 +83,26 @@ def list_profiles_combined() -> list:
         if name in ssd:
             entry["ssd_size"]  = ssd[name]["size"]
             entry["ssd_mtime"] = ssd[name]["modified"]
+            entry["ssd_type"]  = ssd[name]["type"]
         if name in sshd:
             entry["sshd_size"]  = sshd[name]["size"]
             entry["sshd_mtime"] = sshd[name]["modified"]
+            entry["sshd_type"]  = sshd[name]["type"]
         result.append(entry)
     return result
 
 
-# ── file copy with WebSocket progress ─────────────────────────────
+# ── directory-profile helpers (rsync-based, stored on SSHD) ──────
+
+def profile_dir(player: str) -> str:
+    return os.path.join(PROFILES_DIR, player)
+
+
+def profile_exists(player: str) -> bool:
+    return os.path.isdir(profile_dir(player))
+
+
+# ── file copy with WebSocket progress (legacy .img sync) ─────────
 
 def _copy_with_progress(src: str, dst: str,
                          job_id: str, task_id: str, label: str,
@@ -128,10 +165,10 @@ def _copy_with_progress(src: str, dst: str,
         return False
 
 
-# ── sync: SSHD ↔ SSD ─────────────────────────────────────────────
+# ── sync: SSHD ↔ SSD (legacy .img profiles only) ─────────────────
 
 def sync_pull(names: list, job_id: str, socketio) -> dict:
-    """Copy profiles SSHD → SSD (pull into fast local cache)."""
+    """Copy legacy .img profiles SSHD → SSD (pull into fast local cache)."""
     os.makedirs(SSD_JOUEURS_DIR, exist_ok=True)
     results = {}
     for name in names:
@@ -148,7 +185,7 @@ def sync_pull(names: list, job_id: str, socketio) -> dict:
 
 
 def sync_push(names: list, job_id: str, socketio) -> dict:
-    """Copy profiles SSD → SSHD (push to permanent archive)."""
+    """Copy legacy .img profiles SSD → SSHD (push to permanent archive)."""
     os.makedirs(SSHD_JOUEURS_DIR, exist_ok=True)
     results = {}
     for name in names:
@@ -164,41 +201,67 @@ def sync_push(names: list, job_id: str, socketio) -> dict:
     return results
 
 
-# ── profile CRUD (SSD) ────────────────────────────────────────────
+# ── profile CRUD (dir-based on SSHD, legacy .img on SSD/SSHD) ────
 
-def delete_profile(name: str, storage: str = "ssd") -> bool:
+def _profile_paths(name: str, storage: str) -> list:
+    """Return existing (path, type) candidates for a profile under given storage."""
     dirs = []
     if storage in ("ssd",  "both"): dirs.append(SSD_JOUEURS_DIR)
     if storage in ("sshd", "both"): dirs.append(SSHD_JOUEURS_DIR)
-    deleted = False
+    found = []
     for d in dirs:
-        path = os.path.join(d, f"{name}.img")
-        if os.path.exists(path):
+        dir_path = os.path.join(d, name)
+        img_path = os.path.join(d, f"{name}.img")
+        if os.path.isdir(dir_path):
+            found.append((dir_path, "dir"))
+        elif os.path.isfile(img_path):
+            found.append((img_path, "img"))
+    return found
+
+
+def delete_profile(name: str, storage: str = "sshd") -> bool:
+    deleted = False
+    for path, ptype in _profile_paths(name, storage):
+        if ptype == "dir":
+            shutil.rmtree(path)
+        else:
             os.remove(path)
-            deleted = True
+        deleted = True
     if deleted:
         log_history(f"Profile deleted: {name} ({storage})")
     return deleted
 
 
 def rename_profile(old_name: str, new_name: str) -> bool:
-    src = os.path.join(SSD_JOUEURS_DIR, f"{old_name}.img")
-    dst = os.path.join(SSD_JOUEURS_DIR, f"{new_name}.img")
-    if os.path.exists(src):
-        os.rename(src, dst)
+    renamed = False
+    for d in (SSHD_JOUEURS_DIR, SSD_JOUEURS_DIR):
+        src_dir = os.path.join(d, old_name)
+        src_img = os.path.join(d, f"{old_name}.img")
+        if os.path.isdir(src_dir):
+            os.rename(src_dir, os.path.join(d, new_name))
+            renamed = True
+        elif os.path.isfile(src_img):
+            os.rename(src_img, os.path.join(d, f"{new_name}.img"))
+            renamed = True
+    if renamed:
         log_history(f"Profile renamed: {old_name} → {new_name}")
-        return True
-    return False
+    return renamed
 
 
 def copy_profile(src_name: str, dst_name: str) -> bool:
-    src = os.path.join(SSD_JOUEURS_DIR, f"{src_name}.img")
-    dst = os.path.join(SSD_JOUEURS_DIR, f"{dst_name}.img")
-    if os.path.exists(src):
-        shutil.copy2(src, dst)
+    copied = False
+    for d in (SSHD_JOUEURS_DIR, SSD_JOUEURS_DIR):
+        src_dir = os.path.join(d, src_name)
+        src_img = os.path.join(d, f"{src_name}.img")
+        if os.path.isdir(src_dir):
+            shutil.copytree(src_dir, os.path.join(d, dst_name))
+            copied = True
+        elif os.path.isfile(src_img):
+            shutil.copy2(src_img, os.path.join(d, f"{dst_name}.img"))
+            copied = True
+    if copied:
         log_history(f"Profile copied: {src_name} → {dst_name}")
-        return True
-    return False
+    return copied
 
 
 def log_history(message: str):

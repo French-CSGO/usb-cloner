@@ -18,6 +18,11 @@ SSHD_JOUEURS_DIR = os.environ.get("SSHD_JOUEURS_DIR",
                    os.path.join(SSHD_DIR, "joueurs"))
 HISTORY_FILE    = os.environ.get("HISTORY_FILE",     "/data/historique_tournoi.log")
 
+# Directory-based player profiles (rsync) are stored directly on the SSHD —
+# they hold a full CS2 partition tree (Steam/CS2/TeamSpeak) and are too big
+# for the local SSD. Save/Load/Change-player require the SSHD to be mounted.
+PROFILES_DIR    = SSHD_JOUEURS_DIR
+
 # ── Misc ─────────────────────────────────────────────────────────
 LOG_FILE        = os.environ.get("LOG_FILE",         "/data/usb_manager.log")
 ASSOC_FILE      = os.environ.get("ASSOC_FILE",       "/data/usb_associations.conf")

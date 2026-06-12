@@ -142,11 +142,11 @@ async function refreshDevices() {
 }
 
 async function refreshProfiles() {
-  const [ssd, combined] = await Promise.all([
-    api('GET', '/profiles/ssd').catch(() => []),
+  const [sshd, combined] = await Promise.all([
+    api('GET', '/profiles/sshd').catch(() => []),
     api('GET', '/profiles/combined').catch(() => []),
   ]);
-  state.profiles         = ssd;
+  state.profiles         = sshd;
   state.profilesCombined = combined;
   renderProfiles();
   renderSyncTable();
